@@ -451,6 +451,7 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .danger-outline { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
 .danger-outline:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .set-content .cz-select { width: 100%; }
+.set-warn { background: color-mix(in srgb, var(--danger) 10%, transparent); color: #b42318; border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); border-radius: var(--r-sm); padding: 10px 12px; font-size: 12.5px; margin-bottom: 14px; word-break: break-word; }
 @media (max-width: 640px) {
   .settings-modal { flex-direction: column; height: 92vh; width: 96vw; }
   .set-nav { width: auto; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--line); padding: 10px; }

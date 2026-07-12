@@ -191,21 +191,28 @@ export async function listProjectTasks(portalId, projectId, accessToken) {
   return (d.tasks || [])
     .filter((t) => !(t.status && /closed/i.test(t.status.type || t.status.name || '')))
     .map((t) => {
-      const owners = (t.details?.owners || []).map((o) => o.name).filter(Boolean)
-      const fields = {
-        Status: t.status?.name || null,
-        Priority: t.priority || null,
-        Owner: owners.join(', ') || null,
-        'Task List': t.tasklist?.name || null,
-      }
+      // Owners can arrive under details.owners, owners, or owner (shape varies by API version).
+      const ownerList = t.details?.owners || t.owners || (t.owner ? [t.owner] : [])
+      const owners = (Array.isArray(ownerList) ? ownerList : []).map((o) => o?.name || o?.full_name || o?.zpuid || o).filter((x) => x && typeof x === 'string')
+      const status = t.status?.name || (typeof t.status === 'string' ? t.status : null) || t.status_name || null
+      const priority = t.priority || t.priority_name || (typeof t.priority === 'object' ? t.priority?.name : null) || null
+      const tasklist = t.tasklist?.name || t.tasklist_name || null
+      const fields = {}
+      if (status) fields.Status = status
+      if (priority) fields.Priority = priority
+      if (owners.length) fields.Owner = owners.join(', ')
+      if (tasklist) fields['Task List'] = tasklist
+      if (t.percent_complete != null && t.percent_complete !== '') fields['% Complete'] = String(t.percent_complete)
       // Merge in any custom fields defined on the task (shape varies by Zoho version).
-      const raw = t.custom_fields || t.customfields || []
+      const raw = t.custom_fields || t.customfields || t.custom_field_values || []
       if (Array.isArray(raw)) {
         for (const c of raw) {
           const key = c.label_name || c.column_name || c.label || c.name
           const val = c.value != null ? c.value : c.field_value
           if (key && val != null && val !== '') fields[key] = String(val)
         }
+      } else if (raw && typeof raw === 'object') {
+        for (const [key, val] of Object.entries(raw)) if (val != null && val !== '') fields[key] = String(val)
       }
       return { id: String(t.id), title: t.name, status: 'needsAction', owners, fields }
     })

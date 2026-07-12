@@ -531,7 +531,7 @@ export default function Planner() {
           navCfg={navCfg} onNavChange={updateNavCfg} groups={displayGroups} connected={connected} hasZoho={hasZoho}
           zoom={zoom} setZoom={setZoom} tz={tz} onChangeTz={(v) => { setTz(v); saveKey('timezone', v) }}
           focusHidden={focusHidden} setFocusHidden={setFocusHidden} remState={remState} onEnableReminders={enableReminders}
-          onClose={() => setShowConn(false)} />
+          zohoErrors={zoho?.errors} onClose={() => setShowConn(false)} />
       )}
       {showHelp && <ShortcutsModal onClose={() => setShowHelp(false)} />}
       {viewEvent && <EventModal event={viewEvent} onClose={() => setViewEvent(null)} />}
@@ -975,13 +975,13 @@ function SettingRow({ label, sub, on, onClick }) {
 }
 
 // A module block with an on/off header and, when on, its filter builder.
-function ModuleBlock({ name, on, onToggle, opts, rules, onRules, extra }) {
+function ModuleBlock({ name, on, onToggle, opts, rules, onRules, extra, emptyHint }) {
   return (
     <div className="cz-mod">
       <div className="cz-mod-head"><span className="cz-mod-name">{name}</span><Switch on={on} onClick={onToggle} /></div>
       {on && (opts || extra) && (
         <div className="cz-mod-body">
-          {opts ? <FilterBuilder opts={opts} rules={rules} onChange={onRules} extra={extra} /> : extra}
+          {opts ? <FilterBuilder opts={opts} rules={rules} onChange={onRules} extra={extra} emptyHint={emptyHint} /> : extra}
         </div>
       )}
     </div>
@@ -993,7 +993,7 @@ function SettingsModal(props) {
   const {
     connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar,
     taskAccounts, selectedTaskLists, toggleTaskList, navCfg, onNavChange, groups, connected, hasZoho,
-    zoom, setZoom, tz, onChangeTz, focusHidden, setFocusHidden, remState, onEnableReminders, onClose,
+    zoom, setZoom, tz, onChangeTz, focusHidden, setFocusHidden, remState, onEnableReminders, zohoErrors, onClose,
   } = props
   const googleHasTasks = connections.some((c) => c.provider === 'google' && (c.extra?.features || ['calendar', 'tasks']).includes('tasks'))
   const cats = [
@@ -1018,6 +1018,8 @@ function SettingsModal(props) {
   const dealOpts = fieldOptsFrom(crm?.dealFields, crm?.lists.find((l) => l.id === 'deals')?.tasks)
   const leadOpts = fieldOptsFrom(crm?.leadFields, crm?.lists.find((l) => l.id === 'leads')?.tasks)
   const projOpts = fieldOptsFrom(projGroup?.projectFields, (projGroup?.lists || []).flatMap((l) => l.tasks))
+  const crmError = (zohoErrors || []).find((e) => /^(deals|leads|auth)/i.test(e))
+  const projError = (zohoErrors || []).find((e) => /^(projects|tasks|auth)/i.test(e))
 
   const TZ = ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Phoenix', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Asia/Jerusalem', 'Asia/Kolkata', 'Asia/Singapore', 'Australia/Sydney', 'UTC']
   const tzList = TZ.includes(tz) ? TZ : [tz, ...TZ]
@@ -1118,15 +1120,18 @@ function SettingsModal(props) {
 
             {tab === 'crm' && (
               <div className="set-group">
-                <ModuleBlock name="Deals" on={mods.deals !== false} onToggle={() => setMod('deals', mods.deals === false)} opts={dealOpts} rules={filters.deals} onRules={(r) => setRules('deals', r)} />
-                <ModuleBlock name="Leads" on={mods.leads !== false} onToggle={() => setMod('leads', mods.leads === false)} opts={leadOpts} rules={filters.leads} onRules={(r) => setRules('leads', r)} />
+                {crmError && <div className="set-warn">Zoho reported: {crmError}</div>}
+                <ModuleBlock name="Deals" on={mods.deals !== false} onToggle={() => setMod('deals', mods.deals === false)} opts={dealOpts} rules={filters.deals} onRules={(r) => setRules('deals', r)} emptyHint="No fields loaded yet. If you just reconnected, refresh the page; otherwise reconnect Zoho so it can read your CRM fields." />
+                <ModuleBlock name="Leads" on={mods.leads !== false} onToggle={() => setMod('leads', mods.leads === false)} opts={leadOpts} rules={filters.leads} onRules={(r) => setRules('leads', r)} emptyHint="No fields loaded yet. If you just reconnected, refresh the page; otherwise reconnect Zoho so it can read your CRM fields." />
                 <div className="muted" style={{ fontSize: 12 }}>Add as many filters as you want — each pulls a real field and its values. No filters = everything shows.</div>
               </div>
             )}
 
             {tab === 'projects' && (
               <div className="set-group">
-                <ModuleBlock name="Zoho Projects" on={mods.projects !== false} onToggle={() => setMod('projects', mods.projects === false)} opts={projOpts} rules={filters.projects} onRules={(r) => setRules('projects', r)} extra={
+                {projError && <div className="set-warn">Zoho reported: {projError}</div>}
+                <ModuleBlock name="Zoho Projects" on={mods.projects !== false} onToggle={() => setMod('projects', mods.projects === false)} opts={projOpts} rules={filters.projects} onRules={(r) => setRules('projects', r)}
+                  emptyHint="No filterable fields on your project tasks yet — this depends on your tasks having Status/Priority/Owner or custom fields set, not on reconnecting. Use the toggle above to switch between your tasks and all tasks." extra={
                   <div className="seg cz-seg" style={{ marginBottom: 12 }}>
                     <button className={'seg-btn' + (navCfg.zohoAssignee !== 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'mine' })}>Assigned to me</button>
                     <button className={'seg-btn' + (navCfg.zohoAssignee === 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'all' })}>All tasks</button>
@@ -1230,7 +1235,7 @@ function fieldOptsFrom(metaFields, tasks) {
 }
 
 // Add-as-many-as-you-want filter builder for one module. rules = [{field, values}].
-function FilterBuilder({ opts, rules, onChange, extra }) {
+function FilterBuilder({ opts, rules, onChange, extra, emptyHint }) {
   const rs = rules || []
   const addRule = () => { const f = opts[0]; if (f) onChange([...rs, { field: f.api_name, values: [...f.values] }]) }
   const removeRule = (i) => onChange(rs.filter((_, j) => j !== i))
@@ -1257,7 +1262,7 @@ function FilterBuilder({ opts, rules, onChange, extra }) {
       })}
       {opts.length > 0
         ? <button className="cz-add" onClick={addRule}><Icon name="plus" size={14} /> Add filter</button>
-        : <div className="muted" style={{ fontSize: 12 }}>No fields available yet — reconnect Zoho to load your fields.</div>}
+        : <div className="muted" style={{ fontSize: 12 }}>{emptyHint || 'No fields available yet.'}</div>}
     </>
   )
 }
