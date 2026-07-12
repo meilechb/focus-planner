@@ -170,14 +170,14 @@ input { font-family: inherit; }
 .grid { position: relative; margin: 8px 16px 60px 60px; }
 .hour-row { position: absolute; left: -60px; right: 0; border-top: 1px solid var(--line); }
 .hour-row.half { border-top: 1px dashed var(--line-2); }
-.hour-label { position: absolute; left: 0; top: -8px; width: 50px; text-align: right; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.hour-label { position: absolute; left: 0; top: -8px; width: 50px; text-align: right; font-size: 11px; color: #6b7280; font-weight: 500; font-variant-numeric: tabular-nums; }
 
 .ev { position: absolute; border-radius: 7px; overflow: hidden; padding: 3px 8px; }
 .ev-meeting { background: #fff; border: 1px solid #dfe3ea; border-left: 3px solid var(--accent); color: var(--ink-2); box-shadow: var(--shadow-sm); }
 .ev-meeting .ev-title { color: var(--ink); }
 .ev-buffer { background: repeating-linear-gradient(45deg, rgba(230,124,0,.10), rgba(230,124,0,.10) 6px, rgba(230,124,0,.16) 6px, rgba(230,124,0,.16) 12px); border: 1px dashed rgba(214,120,10,.5); color: #a15c00; font-size: 11px; }
 .ev-block { color: #fff; box-shadow: var(--shadow-sm); cursor: grab; user-select: none; }
-.ev-block:hover { box-shadow: var(--shadow-md); filter: brightness(1.03); }
+.ev-block:hover { box-shadow: var(--shadow-md); }
 .ev-title { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ev-time { font-size: 10.5px; opacity: .92; font-variant-numeric: tabular-nums; }
 .ev-tasklist { margin-top: 3px; font-size: 11px; opacity: .96; display: flex; flex-direction: column; gap: 1px; }

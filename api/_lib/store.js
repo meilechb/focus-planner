@@ -10,10 +10,9 @@
 // cannot silently clobber each other.
 
 import crypto from 'node:crypto'
-import { head, put, BlobNotFoundError, BlobPreconditionFailedError } from '@vercel/blob'
+import { head, put, BlobNotFoundError } from '@vercel/blob'
 
 const BLOB_PATH = 'focus/data.json'
-const WRITE_RETRIES = 4
 
 export const DEFAULT_STATE = {
   timezone: 'America/New_York',
@@ -97,13 +96,12 @@ async function readDoc() {
   return { doc, etag: meta.etag ?? null }
 }
 
-async function writeDoc(doc, etag) {
+async function writeDoc(doc) {
   await put(BLOB_PATH, JSON.stringify(doc), {
     access: 'public',
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: 'application/json',
-    ...(etag ? { ifMatch: etag } : {}),
   })
 }
 
@@ -113,24 +111,13 @@ export async function loadDoc() {
   return doc
 }
 
-// Apply `mutator(doc)` and persist, retrying on concurrent modification.
+// Read the whole doc, apply `mutator`, write it back. Single-user app, so
+// last-write-wins is fine; the client also serializes writes into one queue.
 async function mutateDoc(mutator) {
-  let lastErr
-  for (let attempt = 0; attempt < WRITE_RETRIES; attempt++) {
-    const { doc, etag } = await readDoc()
-    const result = mutator(doc)
-    try {
-      await writeDoc(doc, etag)
-      return result
-    } catch (e) {
-      if (e instanceof BlobPreconditionFailedError) {
-        lastErr = e
-        continue // someone else wrote between our read and write; re-read and retry
-      }
-      throw e
-    }
-  }
-  throw lastErr || new Error('write failed after retries')
+  const { doc } = await readDoc()
+  const result = mutator(doc)
+  await writeDoc(doc)
+  return result
 }
 
 // ---------------------------------------------------------------------------

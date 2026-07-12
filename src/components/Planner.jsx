@@ -35,7 +35,7 @@ export default function Planner() {
 
   const [viewDate, setViewDate] = useState(() => isoDate(new Date(), readCache().tz || DEFAULT_TZ))
   const [view, setView] = useState('day') // day | week | month
-  const [zoom, setZoom] = useState(() => Number(localStorage.getItem(ZOOM_KEY)) || 1.3)
+  const [zoom, setZoom] = useState(() => Math.min(3, Math.max(1, Number(localStorage.getItem(ZOOM_KEY)) || 1.5)))
   const [now, setNow] = useState(() => nowMinutes(DEFAULT_TZ))
 
   const [taskFilter, setTaskFilter] = useState('all')
@@ -72,6 +72,14 @@ export default function Planner() {
         setSelectedCalendars(state.selectedCalendars || [])
         setSelectedTaskLists(state.selectedTaskLists || [])
         setStorageOk(true)
+        // Heal: if the server doc is empty but we have cached local data (e.g. a
+        // prior save failed), restore it and push it back up.
+        const cache = readCache()
+        const serverEmpty = !(state.projects || []).length && !Object.keys(state.blocks || {}).length
+        if (serverEmpty && ((cache.projects || []).length || Object.keys(cache.blocks || {}).length)) {
+          if ((cache.projects || []).length) { setProjects(cache.projects); saveKey('projects', cache.projects) }
+          if (Object.keys(cache.blocks || {}).length) { setBlocks(cache.blocks); saveKey('blocks', cache.blocks) }
+        }
       } catch { setStorageOk(false) }
       let conns = []
       try { conns = (await api.get('/api/connections')).connections || []; setConnections(conns) } catch {}
@@ -183,14 +191,21 @@ export default function Planner() {
 
   // --- persistence ----------------------------------------------------------
   const pending = useRef(new Map()); const timer = useRef(null); const flushing = useRef(false)
-  function saveKey(key, value) { if (!storageOk) return; pending.current.set(key, value); clearTimeout(timer.current); timer.current = setTimeout(flush, 400) }
+  function saveKey(key, value) { pending.current.set(key, value); clearTimeout(timer.current); timer.current = setTimeout(flush, 350) }
   async function flush() {
     if (flushing.current) return; flushing.current = true
     try {
       while (pending.current.size) {
         const [key, value] = pending.current.entries().next().value
-        pending.current.delete(key)
-        try { await api.post('/api/data', { key, value }) } catch { setStorageOk(false) }
+        try {
+          await api.post('/api/data', { key, value })
+          pending.current.delete(key) // only drop once persisted
+          setStorageOk(true)
+        } catch {
+          setStorageOk(false) // keep it queued and retry shortly
+          clearTimeout(timer.current); timer.current = setTimeout(flush, 3000)
+          break
+        }
       }
     } finally { flushing.current = false }
   }
@@ -304,7 +319,7 @@ export default function Planner() {
           view={view} setView={setView} viewDate={viewDate} setViewDate={setViewDate} today={today}
           zoom={zoom} setZoom={setZoom} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)}
         />
-        {!storageOk && <div className="banner warn">Storage not reachable — changes are in-memory only.</div>}
+        {!storageOk && <div className="banner warn">Couldn't reach storage — retrying to save your changes…</div>}
         {banner && <div className="banner ok">{banner}<button className="icon-btn x" onClick={() => setBanner('')}>×</button></div>}
 
         {view === 'day' && (
@@ -384,7 +399,7 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, si
       {view !== 'month' && (
         <div className="density">
           <span className="lbl">Density</span>
-          <input type="range" min="0.7" max="3" step="0.05" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} />
+          <input type="range" min="1" max="3" step="0.05" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} />
         </div>
       )}
       <div className="seg">
