@@ -903,8 +903,8 @@ function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCale
                 <button key={c.id} className="conn-card2" onClick={() => setDetail(c)}>
                   <div className="conn-logo"><ProviderIcon provider={c.provider} /></div>
                   <div className="conn-card2-body">
-                    <div className="conn-card2-title">{c.account_label || c.provider}</div>
-                    <div className="conn-card2-sub">{featBadges(c).join(' · ')}</div>
+                    <div className="conn-card2-title">{c.account_label || c.account_email || (c.provider === 'zoho' ? 'Zoho' : 'Google')}</div>
+                    <div className="conn-card2-sub">{featBadges(c).map((f) => f[0].toUpperCase() + f.slice(1)).join(' · ')}</div>
                   </div>
                   <span className="conn-chev"><Icon name="chevronRight" size={18} /></span>
                 </button>
@@ -946,9 +946,9 @@ function ConnectionDetailModal({ connection: c, calendars, selectedCalendars, to
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="conn-detail-head">
           <div className="conn-logo lg"><ProviderIcon provider={c.provider} size={32} /></div>
-          <div><div className="modal-title">{c.account_label || c.provider}</div><div className="muted" style={{ textTransform: 'capitalize' }}>{c.provider}</div></div>
+          <div><div className="modal-title">{c.account_label || c.account_email || (c.provider === 'zoho' ? 'Zoho' : 'Google')}</div><div className="muted" style={{ textTransform: 'capitalize' }}>{c.provider}</div></div>
         </div>
-        <div><div className="field-label">Syncing</div><div className="conn-card-badges">{feats.map((f) => <span key={f} className="conn-badge">{f}</span>)}</div></div>
+        <div><div className="field-label">Syncing</div><div className="conn-card-badges">{feats.map((f) => <span key={f} className="conn-badge">{f[0].toUpperCase() + f.slice(1)}</span>)}</div></div>
         {calendars.length > 0 && (
           <div><div className="field-label">Calendars shown on the grid</div>
             {calendars.map((cal) => { const key = `${c.id}::${cal.id}`; return (
