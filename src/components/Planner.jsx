@@ -24,7 +24,7 @@ const SEEN_KEY = 'focus_seen_accounts'
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
 function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
 const NAVCFG_KEY = 'focus_navcfg'
-const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, zohoAssignee: 'mine', filters: { deals: [], leads: [], projects: [] }, colors: {} }
+const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, zohoAssignee: 'mine', filters: { deals: [], leads: [], projects: [] }, colors: {}, buffers: { before: 15, after: 0 } }
 // One source of truth for connector colors. A block dropped from a source, the
 // sidebar section, and the focus card ALL use this — so a Google task is the
 // same color everywhere. Users can override per source in Settings.
@@ -362,7 +362,7 @@ export default function Planner() {
   function undoBlocks() { const prev = undoStack.current.pop(); if (prev) { setBlocks(prev); saveKey('blocks', prev); pushToast('Change reverted', 'info') } else { pushToast('Nothing to undo', 'info') } }
   const dayBlocks = (d) => blocks[d] || []
   function duplicateBlock(day, block) {
-    const occ = [...meetingsFor(day), ...buffersFrom(meetingsFor(day)), ...(blocks[day] || [])]
+    const occ = [...meetingsFor(day), ...buffersFrom(meetingsFor(day), navCfg.buffers), ...(blocks[day] || [])]
     const dur = block.end - block.start
     const slot = fitDrop(occ, block.end, dur) || fitDrop(occ, DAY_START, dur)
     if (slot) addBlockTo(day, { ...block, id: uuid(), start: slot.start, end: slot.end })
@@ -437,8 +437,8 @@ export default function Planner() {
     const todays = blocks[today] || []
     if (overrideBlockId) { const b = todays.find((x) => x.id === overrideBlockId); if (b) return computeFocus({ blocks: [b], meetings: [], buffers: [], now: b.start, projects }) }
     const m = connected ? (eventsByDate[today] || []) : []
-    return computeFocus({ blocks: todays, meetings: m, buffers: buffersFrom(m), now, projects })
-  }, [blocks, today, overrideBlockId, connected, eventsByDate, now, projects])
+    return computeFocus({ blocks: todays, meetings: m, buffers: buffersFrom(m, navCfg.buffers), now, projects })
+  }, [blocks, today, overrideBlockId, connected, eventsByDate, now, projects, navCfg.buffers])
 
   function advanceToNext() {
     const todays = [...(blocks[today] || [])].sort((a, b) => a.start - b.start)
@@ -506,7 +506,7 @@ export default function Planner() {
         <div className="main-card">
         {view === 'day' && (
           <DayGrid
-            day={viewDate} today={today} now={now} zoom={zoom}
+            day={viewDate} today={today} now={now} zoom={zoom} bufferCfg={navCfg.buffers}
             blocks={dayBlocks(viewDate)} meetings={meetingsFor(viewDate)} projects={projects}
             blockColor={blockColor} blockName={blockName}
             onCommit={(list) => setDayBlocks(viewDate, list)}
@@ -519,7 +519,7 @@ export default function Planner() {
         )}
         {view === 'week' && (
           <WeekGrid
-            viewDate={viewDate} today={today} now={now} zoom={zoom} projects={projects}
+            viewDate={viewDate} today={today} now={now} zoom={zoom} projects={projects} bufferCfg={navCfg.buffers}
             blocksByDay={blocks} meetingsFor={meetingsFor} blockColor={blockColor} blockName={blockName}
             onOpenDay={(d) => { setViewDate(d); setView('day') }}
             onEdit={(b, d) => setEditBlock({ block: b, day: d })}
@@ -648,7 +648,7 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, si
 }
 
 /* ---- Day grid (full drag / resize / click-create) ---- */
-function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockName, onCommit, onEdit, onDelete, onCreateAt, onDropPayload, onOpenEvent }) {
+function DayGrid({ day, today, now, zoom, bufferCfg, blocks, meetings, blockColor, blockName, onCommit, onEdit, onDelete, onCreateAt, onDropPayload, onOpenEvent }) {
   const ref = useRef(null)
   const scrollRef = useRef(null)
   const drag = useRef(null)
@@ -663,7 +663,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
     if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, (VIEW_START - DAY_START) * zoom)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  const buffers = useMemo(() => buffersFrom(meetings), [meetings])
+  const buffers = useMemo(() => buffersFrom(meetings, bufferCfg), [meetings, bufferCfg])
   const height = (DAY_END - DAY_START) * zoom
   const hours = []; for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
   const yToMin = (clientY) => clamp(snap(DAY_START + (clientY - ref.current.getBoundingClientRect().top) / zoom), DAY_START, DAY_END - SNAP_MIN)
@@ -727,7 +727,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
           </div>
         )}
         {hint && <div className={'drop-hint' + (hint.none ? ' invalid' : '')} style={{ top: (hint.start - DAY_START) * zoom, height: (hint.end - hint.start) * zoom }}>{hint.none ? 'No room' : `${label(hint.start)} – ${label(hint.end)}`}</div>}
-        {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 8, right: 10 }}>Prep · {b.forTitle}</div>)}
+        {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 8, right: 10 }}>{b.kind === 'after' ? 'Wrap-up' : 'Prep'} · {b.forTitle}</div>)}
         {meetings.map((m) => { const mh = (m.end - m.start) * zoom; return (
           <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: mh, left: 8, right: 10 }} title={m.title}
             onClick={() => onOpenEvent && onOpenEvent(m)}>
@@ -764,7 +764,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
 }
 
 /* ---- Week grid ---- */
-function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsFor, blockColor, blockName, onOpenDay, onEdit, onCreateAt, onDropPayload, onOpenEvent }) {
+function WeekGrid({ viewDate, today, now, zoom, projects, bufferCfg, blocksByDay, meetingsFor, blockColor, blockName, onOpenDay, onEdit, onCreateAt, onDropPayload, onOpenEvent }) {
   const days = weekDays(viewDate)
   const height = (DAY_END - DAY_START) * zoom
   const hours = []; for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
@@ -792,7 +792,7 @@ function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsF
         </div>
         <div className="week-cols">
           {days.map((d) => {
-            const meetings = meetingsFor(d); const buffers = buffersFrom(meetings); const bl = blocksByDay[d] || []
+            const meetings = meetingsFor(d); const buffers = buffersFrom(meetings, bufferCfg); const bl = blocksByDay[d] || []
             return (
               <div key={d} className={'week-col' + (d === today ? ' is-today' : '')} ref={(el) => (colRefs.current[d] = el)}
                 onDoubleClick={(e) => { if (e.currentTarget === e.target) { const s = fitDrop([...meetings, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) onCreateAt(d, s.start, s.end) } }}
@@ -1268,6 +1268,31 @@ function SettingsModal(props) {
                   <div className="set-group-title">Density</div>
                   <div className="set-slider"><span className="lbl">Compact</span><input type="range" min="1" max="3" step="0.05" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} /><span className="lbl">Roomy</span></div>
                 </div>
+                {(() => {
+                  const buf = navCfg.buffers || { before: 15, after: 0 }
+                  const setBuf = (k, v) => onNavChange({ ...navCfg, buffers: { ...buf, [k]: v } })
+                  const MINS = [5, 10, 15, 20, 30, 45, 60]
+                  const Row = ({ label, k }) => (
+                    <div className="cz-mod">
+                      <div className="cz-mod-head"><span className="cz-mod-name">{label}</span><Switch on={buf[k] > 0} onClick={() => setBuf(k, buf[k] > 0 ? 0 : (k === 'before' ? 15 : 10))} /></div>
+                      {buf[k] > 0 && (
+                        <div className="cz-mod-body">
+                          <div className="cz-chips">{MINS.map((mn) => (
+                            <button key={mn} className={'cz-chip' + (buf[k] === mn ? ' on' : '')} onClick={() => setBuf(k, mn)}>{mn} min</button>
+                          ))}</div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                  return (
+                    <div className="set-group">
+                      <div className="set-group-title">Buffers around meetings</div>
+                      <div className="muted" style={{ fontSize: 12, marginTop: -4, marginBottom: 10 }}>Automatically hold time before and/or after each Google Calendar event.</div>
+                      <Row label="Block time before" k="before" />
+                      <Row label="Block time after" k="after" />
+                    </div>
+                  )
+                })()}
                 {(calAccounts || []).map((a) => (
                   <div key={a.connId} className="set-group">
                     <div className="set-group-title">Calendars · {a.email || 'Google'}</div>

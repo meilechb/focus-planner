@@ -136,19 +136,24 @@ export function uuid() {
 
 // --- prep buffers -----------------------------------------------------------
 
-// A 15-min prep buffer before each meeting, trimmed so it never overlaps an
-// earlier meeting.
-export function buffersFrom(meetings) {
+// Prep buffers before and/or after each meeting, each trimmed so it never
+// overlaps an adjacent meeting. cfg = { before, after } in minutes (0 = off).
+export function buffersFrom(meetings, cfg) {
+  const before = cfg ? (cfg.before || 0) : BUFFER_MIN
+  const after = cfg ? (cfg.after || 0) : 0
   const sorted = [...meetings].sort((a, b) => a.start - b.start)
   const out = []
   for (const m of sorted) {
-    let start = m.start - BUFFER_MIN
-    // don't run the buffer back into a previous meeting
-    for (const other of sorted) {
-      if (other === m) continue
-      if (other.end <= m.start && other.end > start) start = other.end
+    if (before > 0) {
+      let start = m.start - before
+      for (const other of sorted) { if (other === m) continue; if (other.end <= m.start && other.end > start) start = other.end }
+      if (start < m.start) out.push({ start, end: m.start, forTitle: m.title, kind: 'before' })
     }
-    if (start < m.start) out.push({ start, end: m.start, forTitle: m.title })
+    if (after > 0) {
+      let end = m.end + after
+      for (const other of sorted) { if (other === m) continue; if (other.start >= m.end && other.start < end) end = other.start }
+      if (end > m.end) out.push({ start: m.end, end, forTitle: m.title, kind: 'after' })
+    }
   }
   return out
 }
