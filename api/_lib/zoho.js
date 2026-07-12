@@ -212,40 +212,63 @@ export async function listProjects(portalId, accessToken) {
   }
 }
 
-export async function listProjectTasks(portalId, projectId, accessToken) {
-  // V3 tasks endpoint (the old /restapi/.../tasks/ was removed by Zoho).
-  const d = await projGetV3(`/portal/${portalId}/projects/${projectId}/tasks?per_page=200`, accessToken)
-  const closedName = (t) => {
-    const s = t.status
-    return s?.name || s?.type || (typeof s === 'string' ? s : '') || t.status_name || ''
+const closedName = (t) => {
+  const s = t.status
+  return s?.name || s?.type || (typeof s === 'string' ? s : '') || t.status_name || ''
+}
+
+// Normalize one V3 task to our shape, carrying its project ref for grouping.
+function mapProjectTask(t) {
+  const ownerList = t.details?.owners || t.owners || t.assignees || (t.owner ? [t.owner] : []) || (t.assignee ? [t.assignee] : [])
+  const owners = (Array.isArray(ownerList) ? ownerList : []).map((o) => o?.name || o?.full_name || o?.first_name || o?.zpuid || o).filter((x) => x && typeof x === 'string')
+  const status = closedName(t) || null
+  const priority = (typeof t.priority === 'object' ? t.priority?.name : t.priority) || t.priority_name || null
+  const tasklist = t.tasklist?.name || t.tasklist_name || null
+  const fields = {}
+  if (status) fields.Status = status
+  if (priority) fields.Priority = priority
+  if (owners.length) fields.Owner = owners.join(', ')
+  if (tasklist) fields['Task List'] = tasklist
+  if (t.percent_complete != null && t.percent_complete !== '') fields['% Complete'] = String(t.percent_complete)
+  const raw = t.custom_fields || t.customfields || t.custom_field_values || []
+  if (Array.isArray(raw)) {
+    for (const c of raw) {
+      const key = c.label_name || c.column_name || c.label || c.name
+      const val = c.value != null ? c.value : c.field_value
+      if (key && val != null && val !== '') fields[key] = String(val)
+    }
+  } else if (raw && typeof raw === 'object') {
+    for (const [key, val] of Object.entries(raw)) if (val != null && val !== '') fields[key] = String(val)
   }
+  const proj = t.project || t.project_details || {}
+  return {
+    id: zid(t), title: t.name, status: 'needsAction', owners, fields,
+    projectId: String(proj.id_string || proj.id || t.project_id || t.projectId || 'all'),
+    projectName: proj.name || t.project_name || 'Tasks',
+  }
+}
+
+// Get every open task in a portal in one call (V3), each tagged with its
+// project — far more robust than per-project calls (no project-id round-trips).
+export async function listPortalTasks(portalId, accessToken) {
+  const out = []
+  for (let page = 1; page <= 10; page++) {
+    const d = await projGetV3(`/portal/${portalId}/tasks?per_page=200&page=${page}`, accessToken)
+    const arr = d.tasks || d.data || []
+    for (const t of arr) if (!/closed|completed/i.test(closedName(t))) out.push(mapProjectTask(t))
+    if (!(d.page_info?.has_next_page) || !arr.length) break
+  }
+  return out
+}
+
+// Kept for compatibility: tasks in one project (V3).
+export async function listProjectTasks(portalId, projectId, accessToken) {
+  const d = await projGetV3(`/portal/${portalId}/projects/${projectId}/tasks?per_page=200`, accessToken)
   return (d.tasks || d.data || [])
     .filter((t) => !/closed|completed/i.test(closedName(t)))
     .map((t) => {
-      // Owners/assignees vary by API version: details.owners, owners, owner, assignees, assignee.
-      const ownerList = t.details?.owners || t.owners || t.assignees || (t.owner ? [t.owner] : []) || (t.assignee ? [t.assignee] : [])
-      const owners = (Array.isArray(ownerList) ? ownerList : []).map((o) => o?.name || o?.full_name || o?.first_name || o?.zpuid || o).filter((x) => x && typeof x === 'string')
-      const status = closedName(t) || null
-      const priority = (typeof t.priority === 'object' ? t.priority?.name : t.priority) || t.priority_name || null
-      const tasklist = t.tasklist?.name || t.tasklist_name || null
-      const fields = {}
-      if (status) fields.Status = status
-      if (priority) fields.Priority = priority
-      if (owners.length) fields.Owner = owners.join(', ')
-      if (tasklist) fields['Task List'] = tasklist
-      if (t.percent_complete != null && t.percent_complete !== '') fields['% Complete'] = String(t.percent_complete)
-      // Merge in any custom fields defined on the task (shape varies by Zoho version).
-      const raw = t.custom_fields || t.customfields || t.custom_field_values || []
-      if (Array.isArray(raw)) {
-        for (const c of raw) {
-          const key = c.label_name || c.column_name || c.label || c.name
-          const val = c.value != null ? c.value : c.field_value
-          if (key && val != null && val !== '') fields[key] = String(val)
-        }
-      } else if (raw && typeof raw === 'object') {
-        for (const [key, val] of Object.entries(raw)) if (val != null && val !== '') fields[key] = String(val)
-      }
-      return { id: zid(t), title: t.name, status: 'needsAction', owners, fields }
+      const m = mapProjectTask(t)
+      return { id: m.id, title: m.title, status: 'needsAction', owners: m.owners, fields: m.fields }
     })
 }
 

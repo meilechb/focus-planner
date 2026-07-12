@@ -2,7 +2,7 @@
 //   { crm: { deals[], leads[] }, projects: [{ id, name, tasks[] }], errors[] }
 import { requireUser, listConnections, getConnection } from '../_lib/store.js'
 import {
-  refreshAccessToken, getProfile, listCrmFields, listOpenDeals, listOpenLeads, listPortals, listProjects, listProjectTasks, listMyTaskIds,
+  refreshAccessToken, getProfile, listCrmFields, listOpenDeals, listOpenLeads, listPortals, listPortalTasks, listMyTaskIds,
 } from '../_lib/zoho.js'
 
 const clientId = () => process.env.ZOHO_CLIENT_ID
@@ -48,30 +48,26 @@ export default async function handler(req, res) {
       try { crm.deals.push(...(await listOpenDeals(apiDomain, accessToken, dealFields.map((f) => f.api_name)))) } catch (e) { errors.push(`deals: ${e.message || e}`) }
       try { crm.leads.push(...(await listOpenLeads(apiDomain, accessToken, leadFields.map((f) => f.api_name)))) } catch (e) { errors.push(`leads: ${e.message || e}`) }
 
-      // Projects — portals -> projects -> tasks
+      // Projects — one portal-level tasks call per portal (V3), grouped by project.
       try {
         const portals = await listPortals(accessToken)
+        const meName = (profile.name || '').trim().toLowerCase()
         for (const portal of portals) {
           const myIds = await listMyTaskIds(portal.id, accessToken) // Set | null
-          const projs = await listProjects(portal.id, accessToken)
-          for (const p of projs) {
-            let tasks = []
-            try {
-              tasks = await listProjectTasks(portal.id, p.id, accessToken)
-            } catch (e) {
-              errors.push(`tasks(${p.name}): ${e.message || e}`)
-            }
-            // Mark ownership: prefer Zoho's My Tasks set; fall back to owner-name
-            // match against the profile; null when we simply can't tell.
-            const meName = (profile.name || '').trim().toLowerCase()
-            tasks = tasks.map((t) => {
-              let mine = null
-              if (myIds) mine = myIds.has(t.id)
-              else if (meName && t.owners?.length) mine = t.owners.some((o) => o.trim().toLowerCase() === meName)
-              return { ...t, mine }
-            })
-            projects.push({ id: p.id, name: p.name, portalId: portal.id, tasks })
+          let tasks = []
+          try {
+            tasks = await listPortalTasks(portal.id, accessToken)
+          } catch (e) {
+            errors.push(`tasks: ${e.message || e}`)
+            continue
           }
+          const byProject = new Map()
+          for (const t of tasks) {
+            const mine = myIds ? myIds.has(t.id) : (meName && t.owners?.length ? t.owners.some((o) => o.trim().toLowerCase() === meName) : null)
+            if (!byProject.has(t.projectId)) byProject.set(t.projectId, { id: t.projectId, name: t.projectName, portalId: portal.id, tasks: [] })
+            byProject.get(t.projectId).tasks.push({ id: t.id, title: t.title, status: t.status, owners: t.owners, fields: t.fields, mine })
+          }
+          for (const proj of byProject.values()) projects.push(proj)
         }
       } catch (e) {
         errors.push(`projects: ${e.message || e}`)
