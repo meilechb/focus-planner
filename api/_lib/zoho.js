@@ -90,10 +90,15 @@ async function crmGet(apiDomain, accessToken, module, fields) {
   return data.data || []
 }
 
+// A deal/lead is "closed" if its stage/status reads as won, lost, closed,
+// dead, cancelled, junk or converted — those never show.
+const CLOSED_DEAL = /clos|won|lost|dead|cancel|junk|complet/i
+const CLOSED_LEAD = /lost|junk|convert|dead|not\s*qualif/i
+
 export async function listOpenDeals(apiDomain, accessToken) {
   const rows = await crmGet(apiDomain, accessToken, 'Deals', 'Deal_Name,Stage,Amount,Account_Name')
   return rows
-    .filter((r) => !/closed|won|lost/i.test(r.Stage || ''))
+    .filter((r) => !CLOSED_DEAL.test(r.Stage || ''))
     .map((r) => ({
       id: String(r.id),
       title: r.Deal_Name || 'Deal',
@@ -104,7 +109,7 @@ export async function listOpenDeals(apiDomain, accessToken) {
 export async function listOpenLeads(apiDomain, accessToken) {
   const rows = await crmGet(apiDomain, accessToken, 'Leads', 'Full_Name,Last_Name,Company,Lead_Status')
   return rows
-    .filter((r) => !/lost|junk|converted/i.test(r.Lead_Status || ''))
+    .filter((r) => !CLOSED_LEAD.test(r.Lead_Status || ''))
     .map((r) => ({
       id: String(r.id),
       title: r.Full_Name || r.Last_Name || 'Lead',
@@ -137,5 +142,22 @@ export async function listProjectTasks(portalId, projectId, accessToken) {
   const d = await projGet(`/portal/${portalId}/projects/${projectId}/tasks/`, accessToken)
   return (d.tasks || [])
     .filter((t) => !(t.status && /closed/i.test(t.status.type || t.status.name || '')))
-    .map((t) => ({ id: String(t.id), title: t.name, status: 'needsAction' }))
+    .map((t) => ({
+      id: String(t.id),
+      title: t.name,
+      status: 'needsAction',
+      // Owner names for "assigned to me" filtering (Zoho returns details.owners).
+      owners: (t.details?.owners || []).map((o) => o.name).filter(Boolean),
+    }))
+}
+
+// Task ids assigned to the authenticated user in a portal (Zoho's own "My Tasks").
+// Returns null if the endpoint can't be reached, so callers can fall back gracefully.
+export async function listMyTaskIds(portalId, accessToken) {
+  try {
+    const d = await projGet(`/portal/${portalId}/mytasks/`, accessToken)
+    return new Set((d.tasks || []).map((t) => String(t.id)))
+  } catch {
+    return null
+  }
 }

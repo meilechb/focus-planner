@@ -2,7 +2,7 @@
 //   { crm: { deals[], leads[] }, projects: [{ id, name, tasks[] }], errors[] }
 import { requireUser, listConnections, getConnection } from '../_lib/store.js'
 import {
-  refreshAccessToken, listOpenDeals, listOpenLeads, listPortals, listProjects, listProjectTasks,
+  refreshAccessToken, getProfile, listOpenDeals, listOpenLeads, listPortals, listProjects, listProjectTasks, listMyTaskIds,
 } from '../_lib/zoho.js'
 
 const clientId = () => process.env.ZOHO_CLIENT_ID
@@ -37,6 +37,8 @@ export default async function handler(req, res) {
         continue
       }
 
+      const profile = await getProfile(accessToken) // { email, name } for ownership matching
+
       // CRM — deals & leads (each source isolated so one failure doesn't sink the rest)
       try { crm.deals.push(...(await listOpenDeals(apiDomain, accessToken))) } catch (e) { errors.push(`deals: ${e.message || e}`) }
       try { crm.leads.push(...(await listOpenLeads(apiDomain, accessToken))) } catch (e) { errors.push(`leads: ${e.message || e}`) }
@@ -45,6 +47,7 @@ export default async function handler(req, res) {
       try {
         const portals = await listPortals(accessToken)
         for (const portal of portals) {
+          const myIds = await listMyTaskIds(portal.id, accessToken) // Set | null
           const projs = await listProjects(portal.id, accessToken)
           for (const p of projs) {
             let tasks = []
@@ -53,6 +56,15 @@ export default async function handler(req, res) {
             } catch (e) {
               errors.push(`tasks(${p.name}): ${e.message || e}`)
             }
+            // Mark ownership: prefer Zoho's My Tasks set; fall back to owner-name
+            // match against the profile; null when we simply can't tell.
+            const meName = (profile.name || '').trim().toLowerCase()
+            tasks = tasks.map((t) => {
+              let mine = null
+              if (myIds) mine = myIds.has(t.id)
+              else if (meName && t.owners?.length) mine = t.owners.some((o) => o.trim().toLowerCase() === meName)
+              return { ...t, mine }
+            })
             projects.push({ id: p.id, name: p.name, portalId: portal.id, tasks })
           }
         }
