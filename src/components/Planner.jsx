@@ -36,7 +36,14 @@ export default function Planner() {
   const [favorites, setFavorites] = useState(() => readCache().favorites || [])
   const [connections, setConnections] = useState(() => readCache().connections || [])
   const [storageOk, setStorageOk] = useState(true)
-  const [banner, setBanner] = useState('')
+  const [toasts, setToasts] = useState([])
+  const toastTimers = useRef({})
+  function pushToast(msg, kind = 'info') {
+    const id = uuid()
+    setToasts((t) => [...t.slice(-3), { id, msg, kind }])
+    toastTimers.current[id] = setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500)
+  }
+  function dismissToast(id) { clearTimeout(toastTimers.current[id]); setToasts((t) => t.filter((x) => x.id !== id)) }
 
   const [calAccounts, setCalAccounts] = useState(() => readCache().calAccounts || [])
   const [taskAccounts, setTaskAccounts] = useState(() => readCache().taskAccounts || [])
@@ -123,7 +130,8 @@ export default function Planner() {
       const p = new URLSearchParams(location.search)
       if (p.get('connected')) {
         const st = p.get('status')
-        setBanner(st === 'ok' ? `${p.get('connected')} connected` : `Couldn't connect ${p.get('connected')} (${st})`)
+        const prov = p.get('connected'); const name = prov ? prov[0].toUpperCase() + prov.slice(1) : 'Account'
+        pushToast(st === 'ok' ? `${name} connected` : `Couldn't connect ${name} (${st})`, st === 'ok' ? 'success' : 'error')
         history.replaceState({}, '', location.pathname)
       }
     })()
@@ -178,8 +186,10 @@ export default function Planner() {
     } catch (e) { console.error('zoho', e) }
   }
   async function disconnect(id) {
+    const gone = connections.find((c) => c.id === id)
     await api.del('/api/connections?id=' + id).catch(() => {})
     setConnections((await api.get('/api/connections').catch(() => ({ connections: [] }))).connections || [])
+    pushToast(`${gone?.provider === 'zoho' ? 'Zoho' : 'Google'} account disconnected`, 'info')
   }
 
   // --- visible range for the grid ------------------------------------------
@@ -330,7 +340,7 @@ export default function Planner() {
   function updateProjects(n) { setProjects(n); saveKey('projects', n) }
   const undoStack = useRef([])
   function updateBlocks(n) { undoStack.current.push(blocks); if (undoStack.current.length > 60) undoStack.current.shift(); setBlocks(n); saveKey('blocks', n) }
-  function undoBlocks() { const prev = undoStack.current.pop(); if (prev) { setBlocks(prev); saveKey('blocks', prev) } }
+  function undoBlocks() { const prev = undoStack.current.pop(); if (prev) { setBlocks(prev); saveKey('blocks', prev); pushToast('Change reverted', 'info') } else { pushToast('Nothing to undo', 'info') } }
   const dayBlocks = (d) => blocks[d] || []
   function duplicateBlock(day, block) {
     const occ = [...meetingsFor(day), ...buffersFrom(meetingsFor(day)), ...(blocks[day] || [])]
@@ -470,8 +480,7 @@ export default function Planner() {
           zoom={zoom} setZoom={setZoom} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)}
           planned={(dayBlocks(viewDate)).reduce((n, b) => n + (b.end - b.start), 0)}
         />
-        {!storageOk && <div className="banner warn">Couldn't reach storage — retrying to save your changes…</div>}
-        {banner && <div className="banner ok">{banner}<button className="icon-btn x" onClick={() => setBanner('')}><Icon name="x" size={16} /></button></div>}
+        {!storageOk && <div className="banner warn"><span className="banner-dot" />Reconnecting to storage — your changes are saved locally and will sync automatically.</div>}
 
         <div className="main-card">
         {view === 'day' && (
@@ -507,6 +516,16 @@ export default function Planner() {
         )}
         </div>
       </main>
+
+      <div className="toast-stack" role="status" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className={'toast toast-' + t.kind}>
+            <span className="toast-ic"><Icon name={t.kind === 'error' ? 'x' : t.kind === 'success' ? 'check' : 'bell'} size={15} strokeWidth={2.4} /></span>
+            <span className="toast-msg">{t.msg}</span>
+            <button className="toast-x" aria-label="Dismiss" onClick={() => dismissToast(t.id)}><Icon name="x" size={13} /></button>
+          </div>
+        ))}
+      </div>
 
       {!focusHidden && (
         <FocusCard focus={focus} now={now}
