@@ -168,7 +168,7 @@ input { font-family: inherit; }
    ============================================================ */
 .cal-scroll { flex: 1; overflow-y: auto; background: var(--bg); }
 .grid { position: relative; margin: 8px 16px 60px 60px; }
-.hour-row { position: absolute; left: -60px; right: 0; border-top: 1px solid var(--line); }
+.hour-row { position: absolute; left: -60px; right: 0; border-top: 1px solid #edeef1; }
 .hour-row.half { border-top: 1px dashed var(--line-2); }
 .hour-label { position: absolute; left: 0; top: -8px; width: 50px; text-align: right; font-size: 11px; color: #6b7280; font-weight: 500; font-variant-numeric: tabular-nums; }
 
@@ -182,9 +182,14 @@ input { font-family: inherit; }
 .ev-time { font-size: 10.5px; opacity: .92; font-variant-numeric: tabular-nums; }
 .ev-tasklist { margin-top: 3px; font-size: 11px; opacity: .96; display: flex; flex-direction: column; gap: 1px; }
 .ev-task.done { text-decoration: line-through; opacity: .7; }
-.ev-del { position: absolute; top: 3px; right: 4px; width: 18px; height: 18px; border: none; border-radius: 50%; background: rgba(255,255,255,.28); color: #fff; font-size: 13px; line-height: 1; display: none; }
-.ev-block:hover .ev-del { display: block; }
-.ev-resize { position: absolute; left: 0; right: 0; bottom: 0; height: 8px; cursor: ns-resize; }
+.ev-del { position: absolute; top: 1px; right: 3px; width: 14px; height: 14px; border: none; background: none; color: rgba(255,255,255,.75); font-size: 13px; line-height: 1; padding: 0; opacity: .85; z-index: 3; }
+.ev-del:hover { color: #fff; opacity: 1; }
+.ev-line { display: flex; align-items: baseline; gap: 6px; overflow: hidden; }
+.ev-line .ev-title { flex: 0 1 auto; }
+.ev-line .ev-time { flex: none; }
+.ev-block.dragging { opacity: .4; }
+.ev-block .ev-title, .ev-block .ev-time { text-shadow: 0 1px 1.5px rgba(0,0,0,.22); }
+.ev-resize { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize; }
 .now-line { position: absolute; left: -6px; right: 0; height: 2px; background: #ea4335; z-index: 6; pointer-events: none; }
 .now-dot { position: absolute; left: 0; top: -4px; width: 10px; height: 10px; border-radius: 50%; background: #ea4335; box-shadow: 0 0 0 3px rgba(234,67,53,.18); }
 
@@ -284,13 +289,12 @@ input { font-family: inherit; }
 /* drop target highlight */
 .drop-hint { position: absolute; left: 0; right: 0; border: 2px dashed var(--accent); background: var(--accent-weak); border-radius: 7px; z-index: 7; display: flex; align-items: flex-start; padding: 2px 8px; font-size: 11px; color: var(--accent-ink); font-weight: 700; pointer-events: none; }
 
-/* resize handles with visible grips on hover */
-.ev-resize-top { position: absolute; left: 0; right: 0; top: 0; height: 9px; cursor: ns-resize; z-index: 2; }
-.ev-block { cursor: grab; }
-.ev-block:hover .ev-resize-top::after, .ev-block:hover .ev-resize::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); width: 26px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.75); }
+/* subtle resize handles — thin line only on hover */
+.ev-resize-top { position: absolute; left: 0; right: 0; top: 0; height: 7px; cursor: ns-resize; z-index: 2; }
+.ev-resize { z-index: 2; }
+.ev-block:hover .ev-resize-top::after, .ev-block:hover .ev-resize::after { content: ''; position: absolute; left: 8px; right: 8px; height: 2px; border-radius: 2px; background: rgba(255,255,255,.5); }
 .ev-block:hover .ev-resize-top::after { top: 2px; }
 .ev-block:hover .ev-resize::after { bottom: 2px; }
-.ev-resize { z-index: 2; }
 
 /* connections card expand */
 .conn-card-head.clickable { cursor: pointer; }
@@ -310,6 +314,17 @@ input { font-family: inherit; }
 .conn-card2-sub { font-size: 12px; color: var(--muted); text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conn-detail-head { display: flex; align-items: center; gap: 14px; }
 .modal-backdrop.nested { z-index: 1200; background: rgba(17,24,39,.5); }
+
+/* favorites + project star + drag chip */
+.star { background: none; border: none; color: var(--faint); font-size: 14px; padding: 0 2px; opacity: 0; }
+.proj-row:hover .star { opacity: 1; }
+.star.on { color: #f5b301; opacity: 1; }
+.fav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.fav-card { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--r); padding: 10px 11px; cursor: grab; background: var(--panel); transition: box-shadow .12s, border-color .12s; }
+.fav-card:hover { box-shadow: var(--shadow-sm); border-color: #cfd4dc; }
+.fav-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+.fav-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drag-chip { position: fixed; top: -1000px; left: -1000px; background: var(--chip, var(--accent)); color: #fff; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: var(--shadow-md); white-space: nowrap; pointer-events: none; }
 
 /* focus card single-task complete button */
 .focus-complete { display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; background: rgba(255,255,255,.16); border: none; color: #fff; border-radius: 10px; padding: 13px; font-size: 14px; font-weight: 600; transition: background .12s; }

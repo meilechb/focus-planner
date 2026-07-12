@@ -229,6 +229,7 @@ export default function Planner() {
     setEditProject(null)
   }
   function deleteProject(id) { updateProjects(projects.filter((x) => x.id !== id)) }
+  function toggleFavorite(id) { updateProjects(projects.map((p) => (p.id === id ? { ...p, favorite: !p.favorite } : p))) }
 
   function toggleCalendar(k) { const n = selectedCalendars.includes(k) ? selectedCalendars.filter((x) => x !== k) : [...selectedCalendars, k]; setSelectedCalendars(n); saveKey('selectedCalendars', n) }
   function toggleTaskList(k) { const n = selectedTaskLists.includes(k) ? selectedTaskLists.filter((x) => x !== k) : [...selectedTaskLists, k]; setSelectedTaskLists(n); saveKey('selectedTaskLists', n) }
@@ -307,7 +308,7 @@ export default function Planner() {
   return (
     <div className={'app' + (sidebarOpen ? '' : ' sidebar-collapsed')}>
       <Sidebar
-        projects={projects} onNewProject={newProject} onEditProject={setEditProject} onDeleteProject={deleteProject}
+        projects={projects} onNewProject={newProject} onEditProject={setEditProject} onDeleteProject={deleteProject} onToggleFavorite={toggleFavorite}
         connected={connected} hasZoho={hasZoho} groups={displayGroups}
         taskFilter={taskFilter} setTaskFilter={setTaskFilter} taskSearch={taskSearch} setTaskSearch={setTaskSearch}
         collapsed={collapsed} setCollapsed={setCollapsed} sections={sections} setSections={setSections}
@@ -419,6 +420,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
   const latest = useRef(blocks)
   const [localBlocks, setLocalBlocks] = useState(blocks)
   const [hint, setHint] = useState(null)
+  const [draggingId, setDraggingId] = useState(null)
   useEffect(() => { latest.current = blocks; setLocalBlocks(blocks) }, [blocks])
   const buffers = useMemo(() => buffersFrom(meetings), [meetings])
   const height = (DAY_END - DAY_START) * zoom
@@ -430,6 +432,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
   function onPointerDown(e, block, mode) {
     e.stopPropagation(); e.preventDefault()
     drag.current = { id: block.id, mode, startY: e.clientY, orig: { ...block }, moved: false }
+    setDraggingId(block.id)
     window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp)
   }
   function onMove(e) {
@@ -437,20 +440,24 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
     if (Math.abs(e.clientY - dd.startY) > 4) dd.moved = true
     const dMin = snap((e.clientY - dd.startY) / zoom)
     const others = occFor(dd.id)
+    let target = null
     const list = latest.current.map((b) => {
       if (b.id !== dd.id) return b
       if (dd.mode === 'move') {
         const len = dd.orig.end - dd.orig.start
         const r = clampMove(others, clamp(dd.orig.start + dMin, DAY_START, DAY_END - len), len)
-        return r ? { ...b, start: r.start, end: r.end } : b
+        target = r ? { ...b, start: r.start, end: r.end } : b
+        return target
       }
-      if (dd.mode === 'resize-top') return { ...b, start: clampResizeTop(others, dd.orig.end, dd.orig.start + dMin) }
-      return { ...b, end: clampResizeBottom(others, dd.orig.start, dd.orig.end + dMin) }
+      if (dd.mode === 'resize-top') { target = { ...b, start: clampResizeTop(others, dd.orig.end, dd.orig.start + dMin) }; return target }
+      target = { ...b, end: clampResizeBottom(others, dd.orig.start, dd.orig.end + dMin) }; return target
     })
     latest.current = list; setLocalBlocks(list)
+    if (dd.moved && target) setHint({ start: target.start, end: target.end }) // landing highlight
   }
   function onUp() {
     const dd = drag.current; drag.current = null
+    setDraggingId(null); setHint(null)
     window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp)
     if (dd && dd.moved) onCommit(latest.current)
     else if (dd) { const b = blocks.find((x) => x.id === dd.id); if (b) onEdit(b) }
@@ -466,27 +473,37 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
         onDragLeave={(e) => { if (e.target === ref.current) setHint(null) }}
         onDrop={(e) => { e.preventDefault(); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(null); if (s) { try { onDropPayload(JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
         {hours.map((h) => (
-          <React.Fragment key={h}>
-            <div className="hour-row" style={{ top: (h - DAY_START) * zoom }}><span className="hour-label">{labelShort(h)}</span></div>
-            {h < DAY_END && <div className="hour-row half" style={{ top: (h + 30 - DAY_START) * zoom }} />}
-          </React.Fragment>
+          <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom }}><span className="hour-label">{labelShort(h)}</span></div>
         ))}
         {hint && <div className={'drop-hint' + (hint.none ? ' invalid' : '')} style={{ top: (hint.start - DAY_START) * zoom, height: (hint.end - hint.start) * zoom }}>{hint.none ? 'No room' : `${label(hint.start)} – ${label(hint.end)}`}</div>}
-        {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 0, right: 0 }}>Prep · {b.forTitle}</div>)}
-        {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 0, right: 0 }}><div className="ev-title">{m.title}</div><div className="ev-time">{label(m.start)} – {label(m.end)}</div></div>)}
-        {localBlocks.map((b) => (
-          <div key={b.id} className="ev ev-block" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 0, right: 0, background: blockColor(b) }}
-            onPointerDown={(e) => onPointerDown(e, b, 'move')}>
-            <div className="ev-resize-top" onPointerDown={(e) => onPointerDown(e, b, 'resize-top')} />
-            <button className="ev-del" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete(b.id) }}>×</button>
-            <div className="ev-title">{blockName(b)}</div>
-            <div className="ev-time">{label(b.start)} – {label(b.end)}</div>
-            {Array.isArray(b.tasks) && b.tasks.length > 0 && (b.end - b.start) * zoom > 52 && (
-              <div className="ev-tasklist">{b.tasks.slice(0, 4).map((t) => <div key={t.id} className={'ev-task' + (t.status === 'completed' ? ' done' : '')}>• {t.title}</div>)}</div>
-            )}
-            <div className="ev-resize" onPointerDown={(e) => onPointerDown(e, b, 'resize')} />
+        {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 8, right: 10 }}>Prep · {b.forTitle}</div>)}
+        {meetings.map((m) => { const mh = (m.end - m.start) * zoom; return (
+          <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: mh, left: 8, right: 10 }} title={m.title}>
+            {mh < 40
+              ? <div className="ev-line"><span className="ev-title">{m.title}</span><span className="ev-time">{labelShort(m.start)}</span></div>
+              : <><div className="ev-title">{m.title}</div><div className="ev-time">{label(m.start)} – {label(m.end)}</div></>}
           </div>
-        ))}
+        ) })}
+        {localBlocks.map((b) => {
+          const bh = (b.end - b.start) * zoom
+          const short = bh < 40
+          const hasTasks = Array.isArray(b.tasks) && b.tasks.length > 0
+          return (
+            <div key={b.id} className={'ev ev-block' + (draggingId === b.id ? ' dragging' : '')} style={{ top: (b.start - DAY_START) * zoom, height: bh, left: 8, right: 10, background: blockColor(b) }}
+              onPointerDown={(e) => onPointerDown(e, b, 'move')}>
+              <div className="ev-resize-top" onPointerDown={(e) => onPointerDown(e, b, 'resize-top')} />
+              <button className="ev-del" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete(b.id) }}>×</button>
+              {short
+                ? <div className="ev-line"><span className="ev-title">{blockName(b)}</span><span className="ev-time">{labelShort(b.start)}</span></div>
+                : <>
+                    <div className="ev-title">{blockName(b)}</div>
+                    <div className="ev-time">{label(b.start)} – {label(b.end)}</div>
+                    {hasTasks && bh > 64 && <div className="ev-tasklist">{b.tasks.slice(0, 4).map((t) => <div key={t.id} className={'ev-task' + (t.status === 'completed' ? ' done' : '')}>• {t.title}</div>)}</div>}
+                  </>}
+              <div className="ev-resize" onPointerDown={(e) => onPointerDown(e, b, 'resize')} />
+            </div>
+          )
+        })}
         {day === today && now >= DAY_START && now <= DAY_END && <div className="now-line" style={{ top: (now - DAY_START) * zoom }}><span className="now-dot" /></div>}
       </div>
     </div>
@@ -564,18 +581,42 @@ function MonthGrid({ viewDate, today, blocksByDay, meetingsFor, blockColor, bloc
 /* ---- Sidebar ---- */
 function Sidebar(props) {
   const {
-    projects, onNewProject, onEditProject, onDeleteProject, connected, hasZoho, groups,
+    projects, onNewProject, onEditProject, onDeleteProject, onToggleFavorite, connected, hasZoho, groups,
     taskFilter, setTaskFilter, taskSearch, setTaskSearch, collapsed, setCollapsed, sections, setSections,
     connections, onOpenConnections, remState, onEnableReminders,
   } = props
-  const dragProject = (e, id) => e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'project', projectId: id }))
-  const dragTask = (e, task, g, l) => e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', task: { ...task, connId: g.id, listId: l.id } }))
-  const dragBatch = (e, g, l) => e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: l.title, tasks: l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) }))
+  function chip(e, text, color) {
+    const el = document.createElement('div')
+    el.className = 'drag-chip'
+    if (color) el.style.setProperty('--chip', color)
+    el.textContent = text
+    document.body.appendChild(el)
+    e.dataTransfer.setDragImage(el, 12, 12)
+    setTimeout(() => el.remove(), 0)
+  }
+  const dragProject = (e, p) => { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'project', projectId: p.id })); chip(e, p.name, p.color) }
+  const dragTask = (e, task, g, l) => { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', task: { ...task, connId: g.id, listId: l.id } })); chip(e, task.title) }
+  const dragBatch = (e, g, l) => { const tasks = l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })); e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: l.title, tasks })); chip(e, `${l.title} · ${tasks.length}`) }
   const toggleSec = (k) => setSections({ ...sections, [k]: !sections[k] })
+  const favorites = projects.filter((p) => p.favorite)
 
   return (
     <aside className="sidebar">
       <div className="brand"><span className="dot" /> Focus Planner</div>
+
+      {favorites.length > 0 && (
+        <div className="sb-fixed">
+          <div className="sb-head">Favorites</div>
+          <div className="fav-grid">
+            {favorites.map((p) => (
+              <div key={p.id} className="fav-card" draggable onDragStart={(e) => dragProject(e, p)} onClick={() => onEditProject(p)}>
+                <span className="fav-dot" style={{ background: p.color }} />
+                <span className="fav-name">{p.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="sb-fixed">
         <div className="sb-head clickable" onClick={() => toggleSec('projects')}>
@@ -585,10 +626,11 @@ function Sidebar(props) {
           <>
             <div className="proj-list">
               {projects.map((p) => (
-                <div key={p.id} className="proj-row" draggable onDragStart={(e) => dragProject(e, p.id)}>
+                <div key={p.id} className="proj-row" draggable onDragStart={(e) => dragProject(e, p)}>
                   <span className="grip">⋮⋮</span>
                   <span className="swatch" style={{ background: p.color }} />
                   <span className="proj-name" onClick={() => onEditProject(p)}>{p.name}</span>
+                  <button className={'star' + (p.favorite ? ' on' : '')} title={p.favorite ? 'Unfavorite' : 'Favorite'} onClick={() => onToggleFavorite(p.id)}>{p.favorite ? '★' : '☆'}</button>
                   <button className="row-x" onClick={() => onDeleteProject(p.id)}>×</button>
                 </div>
               ))}
