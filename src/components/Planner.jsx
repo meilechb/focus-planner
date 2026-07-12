@@ -1082,6 +1082,21 @@ function ZohoIcon({ size = 26 }) {
 }
 function ProviderIcon({ provider, size }) { return provider === 'zoho' ? <ZohoIcon size={size} /> : <GoogleIcon size={size} /> }
 
+// A color picker row for a connector's block color.
+function ColorRow({ label, k, cur, onPick }) {
+  const active = cur(k)
+  return (
+    <div className="cz-mod" style={{ padding: '11px 14px' }}>
+      <div className="cz-mod-name" style={{ marginBottom: 9 }}>{label}</div>
+      <div className="swatches">
+        {COLOR_CHOICES.map((c) => (
+          <button key={c} className={'swatch-btn' + (active.toLowerCase() === c.toLowerCase() ? ' on' : '')} style={{ background: c }} onClick={() => onPick(k, c)} aria-label={c} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // One iOS-style row: label + on/off switch.
 function SettingRow({ label, sub, on, onClick }) {
   return (
@@ -1117,15 +1132,23 @@ function SettingsModal(props) {
   const cats = [
     { id: 'connections', label: 'Connections', icon: 'link' },
     { id: 'calendar', label: 'Calendar', icon: 'calendar' },
-    googleHasTasks && { id: 'gtasks', label: 'Google Tasks', icon: 'check' },
-    hasZoho && { id: 'crm', label: 'Zoho CRM', icon: 'list' },
-    hasZoho && { id: 'projects', label: 'Zoho Projects', icon: 'folder' },
     { id: 'focus', label: 'Focus & reminders', icon: 'bell' },
     { id: 'general', label: 'General', icon: 'sliders' },
-  ].filter(Boolean)
-  const [tab, setTab] = useState(cats.some((c) => c.id === initialTab) ? initialTab : 'connections')
+  ]
+  // Per-source settings (gtasks/crm/projects) live inside each connection now.
+  const googleConn = connections.find((c) => c.provider === 'google')
+  const zohoConn = connections.find((c) => c.provider === 'zoho')
+  const tabFor = (t) => (cats.some((c) => c.id === t) ? t : (['gtasks', 'crm', 'projects'].includes(t) ? 'connections' : 'connections'))
+  const [tab, setTab] = useState(tabFor(initialTab))
+  const [expanded, setExpanded] = useState(() => {
+    if (initialTab === 'gtasks') return googleConn?.id
+    if (initialTab === 'crm' || initialTab === 'projects') return zohoConn?.id
+    return null
+  })
   const [addGoogle, setAddGoogle] = useState(false)
   const [gfeats, setGfeats] = useState({ calendar: true, tasks: true })
+  const curColor = (k) => navCfg.colors?.[k] || DEFAULT_COLORS[k]
+  const setColor = (k, c) => onNavChange({ ...navCfg, colors: { ...(navCfg.colors || {}), [k]: c } })
 
   const mods = navCfg.modules || {}
   const filters = navCfg.filters || { deals: [], leads: [], projects: [] }
@@ -1167,16 +1190,58 @@ function SettingsModal(props) {
               <>
                 {connections.length > 0 && <div className="set-group">
                   <div className="set-group-title">Connected accounts</div>
-                  {connections.map((c) => (
-                    <div key={c.id} className="set-acct">
-                      <div className="conn-logo"><ProviderIcon provider={c.provider} /></div>
-                      <div className="set-acct-body">
-                        <div className="set-acct-title">{c.account_label || c.account_email || (c.provider === 'zoho' ? 'Zoho' : 'Google')}</div>
-                        <div className="set-acct-sub">{(c.provider === 'google' ? (c.extra?.features || ['calendar', 'tasks']) : ['deals', 'leads', 'projects']).map((f) => f[0].toUpperCase() + f.slice(1)).join(' · ')}</div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: -4, marginBottom: 10 }}>Click an account to configure what it syncs, its filters, and its color.</div>
+                  {connections.map((c) => {
+                    const isZoho = c.provider === 'zoho'
+                    const open = expanded === c.id
+                    return (
+                      <div key={c.id} className={'set-acct-card' + (open ? ' open' : '')}>
+                        <div className="set-acct" onClick={() => setExpanded(open ? null : c.id)}>
+                          <div className="conn-logo"><ProviderIcon provider={c.provider} /></div>
+                          <div className="set-acct-body">
+                            <div className="set-acct-title">{c.account_label || c.account_email || (isZoho ? 'Zoho' : 'Google')}</div>
+                            <div className="set-acct-sub">{(c.provider === 'google' ? (c.extra?.features || ['calendar', 'tasks']) : ['deals', 'leads', 'projects']).map((f) => f[0].toUpperCase() + f.slice(1)).join(' · ')}</div>
+                          </div>
+                          <span className="sbx-caret"><Icon name={open ? 'chevronDown' : 'chevronRight'} size={17} /></span>
+                        </div>
+                        {open && (
+                          <div className="set-acct-settings">
+                            {c.provider === 'google' && (
+                              <>
+                                {googleHasTasks && <ModuleBlock name="Google Tasks" on={mods.google !== false} onToggle={() => setMod('google', mods.google === false)} />}
+                                <ColorRow label="Google Tasks color" k="google" cur={curColor} onPick={setColor} />
+                                {(taskAccounts || []).filter((a) => a.connId === c.id).map((a) => (
+                                  <div key={a.connId}><div className="cz-sec-title">Task lists</div>
+                                    {(a.lists || []).map((l) => { const key = `${a.connId}::${l.id}`; return (
+                                      <label key={l.id} className="cal-row"><input type="checkbox" checked={selectedTaskLists.includes(key)} onChange={() => toggleTaskList(key)} />{l.title}</label>
+                                    ) })}
+                                  </div>
+                                ))}
+                              </>
+                            )}
+                            {isZoho && (
+                              <>
+                                {crmError && <div className="set-warn">Zoho reported: {crmError}</div>}
+                                <ModuleBlock name="CRM · Deals" on={mods.deals !== false} onToggle={() => setMod('deals', mods.deals === false)} opts={dealOpts} rules={filters.deals} onRules={(r) => setRules('deals', r)} emptyHint="No fields loaded yet — refresh, or reconnect Zoho so it can read your CRM fields." />
+                                <ModuleBlock name="CRM · Leads" on={mods.leads !== false} onToggle={() => setMod('leads', mods.leads === false)} opts={leadOpts} rules={filters.leads} onRules={(r) => setRules('leads', r)} emptyHint="No fields loaded yet — refresh, or reconnect Zoho so it can read your CRM fields." />
+                                <ColorRow label="Zoho CRM color" k="zoho-crm" cur={curColor} onPick={setColor} />
+                                {projError && <div className="set-warn">Zoho reported: {projError}</div>}
+                                <ModuleBlock name="Projects" on={mods.projects !== false} onToggle={() => setMod('projects', mods.projects === false)} opts={projOpts} rules={filters.projects} onRules={(r) => setRules('projects', r)}
+                                  emptyHint="No filterable fields on your project tasks yet." extra={
+                                    <div className="seg cz-seg" style={{ marginBottom: 12 }}>
+                                      <button className={'seg-btn' + (navCfg.zohoAssignee !== 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'mine' })}>Assigned to me</button>
+                                      <button className={'seg-btn' + (navCfg.zohoAssignee === 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'all' })}>All tasks</button>
+                                    </div>
+                                  } />
+                                <ColorRow label="Zoho Projects color" k="zoho-projects" cur={curColor} onPick={setColor} />
+                              </>
+                            )}
+                            <div className="set-acct-foot"><button className="link danger" onClick={() => onDisconnect(c.id)}>Disconnect account</button></div>
+                          </div>
+                        )}
                       </div>
-                      <button className="btn sm danger-outline" onClick={() => onDisconnect(c.id)}>Disconnect</button>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>}
                 <div className="set-group">
                   <div className="set-group-title">Add a connection</div>
@@ -1216,46 +1281,6 @@ function SettingsModal(props) {
                 ))}
                 {!(calAccounts || []).length && <div className="muted">Connect a Google account with Calendar to choose which calendars show.</div>}
               </>
-            )}
-
-            {tab === 'gtasks' && (
-              <>
-                <div className="set-group">
-                  <div className="set-group-title">Module</div>
-                  <SettingRow label="Show Google Tasks in the sidebar" on={mods.google !== false} onClick={() => setMod('google', mods.google === false)} />
-                </div>
-                {(taskAccounts || []).map((a) => (
-                  <div key={a.connId} className="set-group">
-                    <div className="set-group-title">Lists · {a.email || 'Google'}</div>
-                    {(a.lists || []).map((l) => { const key = `${a.connId}::${l.id}`; return (
-                      <label key={l.id} className="cal-row"><input type="checkbox" checked={selectedTaskLists.includes(key)} onChange={() => toggleTaskList(key)} />{l.title}</label>
-                    ) })}
-                    {!(a.lists || []).length && <div className="muted" style={{ fontSize: 12 }}>No task lists found.</div>}
-                  </div>
-                ))}
-              </>
-            )}
-
-            {tab === 'crm' && (
-              <div className="set-group">
-                {crmError && <div className="set-warn">Zoho reported: {crmError}</div>}
-                <ModuleBlock name="Deals" on={mods.deals !== false} onToggle={() => setMod('deals', mods.deals === false)} opts={dealOpts} rules={filters.deals} onRules={(r) => setRules('deals', r)} emptyHint="No fields loaded yet. If you just reconnected, refresh the page; otherwise reconnect Zoho so it can read your CRM fields." />
-                <ModuleBlock name="Leads" on={mods.leads !== false} onToggle={() => setMod('leads', mods.leads === false)} opts={leadOpts} rules={filters.leads} onRules={(r) => setRules('leads', r)} emptyHint="No fields loaded yet. If you just reconnected, refresh the page; otherwise reconnect Zoho so it can read your CRM fields." />
-                <div className="muted" style={{ fontSize: 12 }}>Add as many filters as you want — each pulls a real field and its values. No filters = everything shows.</div>
-              </div>
-            )}
-
-            {tab === 'projects' && (
-              <div className="set-group">
-                {projError && <div className="set-warn">Zoho reported: {projError}</div>}
-                <ModuleBlock name="Zoho Projects" on={mods.projects !== false} onToggle={() => setMod('projects', mods.projects === false)} opts={projOpts} rules={filters.projects} onRules={(r) => setRules('projects', r)}
-                  emptyHint="No filterable fields on your project tasks yet — this depends on your tasks having Status/Priority/Owner or custom fields set, not on reconnecting. Use the toggle above to switch between your tasks and all tasks." extra={
-                  <div className="seg cz-seg" style={{ marginBottom: 12 }}>
-                    <button className={'seg-btn' + (navCfg.zohoAssignee !== 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'mine' })}>Assigned to me</button>
-                    <button className={'seg-btn' + (navCfg.zohoAssignee === 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'all' })}>All tasks</button>
-                  </div>
-                } />
-              </div>
             )}
 
             {tab === 'focus' && (
