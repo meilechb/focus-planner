@@ -525,9 +525,12 @@ export default function Planner() {
           onClose={() => setEditBlock(null)} />
       )}
       {showConn && (
-        <ConnectionsModal connections={connections} onDisconnect={disconnect}
+        <SettingsModal connections={connections} onDisconnect={disconnect}
           calAccounts={calAccounts} selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
-          navCfg={navCfg} onNavChange={updateNavCfg} groups={displayGroups}
+          taskAccounts={taskAccounts} selectedTaskLists={selectedTaskLists} toggleTaskList={toggleTaskList}
+          navCfg={navCfg} onNavChange={updateNavCfg} groups={displayGroups} connected={connected} hasZoho={hasZoho}
+          zoom={zoom} setZoom={setZoom} tz={tz} onChangeTz={(v) => { setTz(v); saveKey('timezone', v) }}
+          focusHidden={focusHidden} setFocusHidden={setFocusHidden} remState={remState} onEnableReminders={enableReminders}
           onClose={() => setShowConn(false)} />
       )}
       {showHelp && <ShortcutsModal onClose={() => setShowHelp(false)} />}
@@ -882,9 +885,6 @@ function Sidebar(props) {
             </div>
           </div>
           <div className="task-search"><Icon name="search" size={15} className="search-ic" /><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
-          {(connected || hasZoho) && (
-            <button className="customize-btn" onClick={onCustomize}><Icon name="sliders" size={14} /> Modules &amp; filters</button>
-          )}
           {!connected && !hasZoho && (
             <div className="empty-hint">No accounts connected.<br /><button className="link" onClick={onOpenConnections}>Connect Google or Zoho</button> to see your tasks.</div>
           )}
@@ -929,9 +929,8 @@ function Sidebar(props) {
 
       <div className="sidebar-foot">
         <button className="btn conn-btn" onClick={onOpenConnections}>
-          <span className="gear"><Icon name="settings" size={15} /></span> Connections{connections.length ? <span className="conn-count">{connections.length}</span> : ''}
+          <span className="gear"><Icon name="settings" size={15} /></span> Settings
         </button>
-        {remState !== 'granted' && <button className="link" style={{ marginTop: 8 }} onClick={onEnableReminders} disabled={remState === 'unsupported'}>Enable reminders</button>}
       </div>
     </aside>
   )
@@ -965,146 +964,205 @@ function ZohoIcon({ size = 26 }) {
 }
 function ProviderIcon({ provider, size }) { return provider === 'zoho' ? <ZohoIcon size={size} /> : <GoogleIcon size={size} /> }
 
-function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar, navCfg, onNavChange, groups, onClose }) {
-  const [detail, setDetail] = useState(null)
+// One iOS-style row: label + on/off switch.
+function SettingRow({ label, sub, on, onClick }) {
+  return (
+    <div className="set-row">
+      <div><div className="set-row-label">{label}</div>{sub && <div className="set-row-sub">{sub}</div>}</div>
+      <Switch on={on} onClick={onClick} />
+    </div>
+  )
+}
+
+// A module block with an on/off header and, when on, its filter builder.
+function ModuleBlock({ name, on, onToggle, opts, rules, onRules, extra }) {
+  return (
+    <div className="cz-mod">
+      <div className="cz-mod-head"><span className="cz-mod-name">{name}</span><Switch on={on} onClick={onToggle} /></div>
+      {on && (opts || extra) && (
+        <div className="cz-mod-body">
+          {opts ? <FilterBuilder opts={opts} rules={rules} onChange={onRules} extra={extra} /> : extra}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Full-screen Settings: left category nav + one scrolling content pane. No nested popups.
+function SettingsModal(props) {
+  const {
+    connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar,
+    taskAccounts, selectedTaskLists, toggleTaskList, navCfg, onNavChange, groups, connected, hasZoho,
+    zoom, setZoom, tz, onChangeTz, focusHidden, setFocusHidden, remState, onEnableReminders, onClose,
+  } = props
+  const googleHasTasks = connections.some((c) => c.provider === 'google' && (c.extra?.features || ['calendar', 'tasks']).includes('tasks'))
+  const cats = [
+    { id: 'connections', label: 'Connections', icon: 'link' },
+    { id: 'calendar', label: 'Calendar', icon: 'calendar' },
+    googleHasTasks && { id: 'gtasks', label: 'Google Tasks', icon: 'check' },
+    hasZoho && { id: 'crm', label: 'Zoho CRM', icon: 'list' },
+    hasZoho && { id: 'projects', label: 'Zoho Projects', icon: 'folder' },
+    { id: 'focus', label: 'Focus & reminders', icon: 'bell' },
+    { id: 'general', label: 'General', icon: 'sliders' },
+  ].filter(Boolean)
+  const [tab, setTab] = useState('connections')
   const [addGoogle, setAddGoogle] = useState(false)
-  const featBadges = (c) => (c.provider === 'google' ? (c.extra?.features || ['calendar', 'tasks']) : ['deals', 'leads', 'projects'])
+  const [gfeats, setGfeats] = useState({ calendar: true, tasks: true })
+
+  const mods = navCfg.modules || {}
+  const filters = navCfg.filters || { deals: [], leads: [], projects: [] }
+  const setMod = (k, v) => onNavChange({ ...navCfg, modules: { ...mods, [k]: v } })
+  const setRules = (key, rules) => onNavChange({ ...navCfg, filters: { ...filters, [key]: rules } })
+  const crm = groups?.find((g) => g.id === 'zoho-crm')
+  const projGroup = groups?.find((g) => g.id === 'zoho-projects')
+  const dealOpts = fieldOptsFrom(crm?.dealFields, crm?.lists.find((l) => l.id === 'deals')?.tasks)
+  const leadOpts = fieldOptsFrom(crm?.leadFields, crm?.lists.find((l) => l.id === 'leads')?.tasks)
+  const projOpts = fieldOptsFrom(projGroup?.projectFields, (projGroup?.lists || []).flatMap((l) => l.tasks))
+
+  const TZ = ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Phoenix', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Asia/Jerusalem', 'Asia/Kolkata', 'Asia/Singapore', 'Australia/Sydney', 'UTC']
+  const tzList = TZ.includes(tz) ? TZ : [tz, ...TZ]
+
+  const googleAcct = connections.find((c) => c.provider === 'google' && (c.extra?.features || ['calendar']).includes('calendar'))
+  const addHref = `/api/google/start?feats=${[gfeats.calendar && 'calendar', gfeats.tasks && 'tasks'].filter(Boolean).join(',') || 'tasks'}`
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal conn-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="conn-modal-head">
-          <div className="modal-title">Connections</div>
-          <button className="icon-btn" onClick={onClose}><Icon name="x" size={18} /></button>
-        </div>
-        <div className="conn-body">
-          {connections.length > 0 && <>
-            <div className="conn-section-label">Your connections</div>
-            <div className="conn-grid">
-              {connections.map((c) => (
-                <button key={c.id} className="conn-card2" onClick={() => setDetail(c)}>
-                  <div className="conn-logo"><ProviderIcon provider={c.provider} /></div>
-                  <div className="conn-card2-body">
-                    <div className="conn-card2-title">{c.account_label || c.account_email || (c.provider === 'zoho' ? 'Zoho' : 'Google')}</div>
-                    <div className="conn-card2-sub">{featBadges(c).map((f) => f[0].toUpperCase() + f.slice(1)).join(' · ')}</div>
-                  </div>
-                  <span className="conn-chev"><Icon name="chevronRight" size={18} /></span>
-                </button>
-              ))}
-            </div>
-          </>}
-
-          <div className="conn-section-label">Add a connection</div>
-          <div className="conn-grid">
-            <button className="conn-card2" onClick={() => setAddGoogle(true)}>
-              <div className="conn-logo"><GoogleIcon /></div>
-              <div className="conn-card2-body"><div className="conn-card2-title">Google</div><div className="conn-card2-sub">Calendar & Tasks</div></div>
-              <span className="conn-chev"><Icon name="plus" size={18} /></span>
+      <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
+        <nav className="set-nav">
+          <div className="set-nav-title">Settings</div>
+          {cats.map((c) => (
+            <button key={c.id} className={'set-nav-item' + (tab === c.id ? ' on' : '')} onClick={() => setTab(c.id)}>
+              <Icon name={c.icon} size={16} /> {c.label}
             </button>
-            <a className="conn-card2" href="/api/zoho/start">
-              <div className="conn-logo"><ZohoIcon /></div>
-              <div className="conn-card2-body"><div className="conn-card2-title">Zoho</div><div className="conn-card2-sub">Deals, leads & projects</div></div>
-              <span className="conn-chev"><Icon name="plus" size={18} /></span>
-            </a>
+          ))}
+        </nav>
+        <div className="set-main">
+          <div className="set-head">
+            <div className="set-head-title">{cats.find((c) => c.id === tab)?.label}</div>
+            <button className="icon-btn" onClick={onClose}><Icon name="x" size={18} /></button>
+          </div>
+          <div className="set-content">
+
+            {tab === 'connections' && (
+              <>
+                {connections.length > 0 && <div className="set-group">
+                  <div className="set-group-title">Connected accounts</div>
+                  {connections.map((c) => (
+                    <div key={c.id} className="set-acct">
+                      <div className="conn-logo"><ProviderIcon provider={c.provider} /></div>
+                      <div className="set-acct-body">
+                        <div className="set-acct-title">{c.account_label || c.account_email || (c.provider === 'zoho' ? 'Zoho' : 'Google')}</div>
+                        <div className="set-acct-sub">{(c.provider === 'google' ? (c.extra?.features || ['calendar', 'tasks']) : ['deals', 'leads', 'projects']).map((f) => f[0].toUpperCase() + f.slice(1)).join(' · ')}</div>
+                      </div>
+                      <button className="btn sm danger-outline" onClick={() => onDisconnect(c.id)}>Disconnect</button>
+                    </div>
+                  ))}
+                </div>}
+                <div className="set-group">
+                  <div className="set-group-title">Add a connection</div>
+                  {!addGoogle ? (
+                    <div className="set-add-row">
+                      <button className="btn add-conn" onClick={() => setAddGoogle(true)}><span className="conn-logo sm"><GoogleIcon size={20} /></span> Add Google</button>
+                      <a className="btn add-conn" href="/api/zoho/start"><span className="conn-logo sm"><ZohoIcon size={20} /></span> Add Zoho</a>
+                    </div>
+                  ) : (
+                    <div className="set-inline-add">
+                      <div className="set-row-label" style={{ marginBottom: 8 }}>What should this Google account sync?</div>
+                      <div className="conn-featrow">
+                        <label className="chk"><input type="checkbox" checked={gfeats.calendar} onChange={(e) => setGfeats({ ...gfeats, calendar: e.target.checked })} /> Calendar</label>
+                        <label className="chk"><input type="checkbox" checked={gfeats.tasks} onChange={(e) => setGfeats({ ...gfeats, tasks: e.target.checked })} /> Tasks</label>
+                      </div>
+                      <div className="modal-actions" style={{ marginTop: 12 }}><button className="btn" onClick={() => setAddGoogle(false)}>Cancel</button><div className="spacer" /><a className={'btn primary' + (!gfeats.calendar && !gfeats.tasks ? ' disabled' : '')} href={addHref} onClick={(e) => !gfeats.calendar && !gfeats.tasks && e.preventDefault()}>Connect Google</a></div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {tab === 'calendar' && (
+              <>
+                <div className="set-group">
+                  <div className="set-group-title">Density</div>
+                  <div className="set-slider"><span className="lbl">Compact</span><input type="range" min="1" max="3" step="0.05" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} /><span className="lbl">Roomy</span></div>
+                </div>
+                {(calAccounts || []).map((a) => (
+                  <div key={a.connId} className="set-group">
+                    <div className="set-group-title">Calendars · {a.email || 'Google'}</div>
+                    {(a.calendars || []).map((cal) => { const key = `${a.connId}::${cal.id}`; return (
+                      <label key={cal.id} className="cal-row"><input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} /><span className="swatch" style={{ background: cal.color || '#888' }} />{cal.summary}</label>
+                    ) })}
+                    {!(a.calendars || []).length && <div className="muted" style={{ fontSize: 12 }}>No calendars found.</div>}
+                  </div>
+                ))}
+                {!(calAccounts || []).length && <div className="muted">Connect a Google account with Calendar to choose which calendars show.</div>}
+              </>
+            )}
+
+            {tab === 'gtasks' && (
+              <>
+                <div className="set-group">
+                  <div className="set-group-title">Module</div>
+                  <SettingRow label="Show Google Tasks in the sidebar" on={mods.google !== false} onClick={() => setMod('google', mods.google === false)} />
+                </div>
+                {(taskAccounts || []).map((a) => (
+                  <div key={a.connId} className="set-group">
+                    <div className="set-group-title">Lists · {a.email || 'Google'}</div>
+                    {(a.lists || []).map((l) => { const key = `${a.connId}::${l.id}`; return (
+                      <label key={l.id} className="cal-row"><input type="checkbox" checked={selectedTaskLists.includes(key)} onChange={() => toggleTaskList(key)} />{l.title}</label>
+                    ) })}
+                    {!(a.lists || []).length && <div className="muted" style={{ fontSize: 12 }}>No task lists found.</div>}
+                  </div>
+                ))}
+              </>
+            )}
+
+            {tab === 'crm' && (
+              <div className="set-group">
+                <ModuleBlock name="Deals" on={mods.deals !== false} onToggle={() => setMod('deals', mods.deals === false)} opts={dealOpts} rules={filters.deals} onRules={(r) => setRules('deals', r)} />
+                <ModuleBlock name="Leads" on={mods.leads !== false} onToggle={() => setMod('leads', mods.leads === false)} opts={leadOpts} rules={filters.leads} onRules={(r) => setRules('leads', r)} />
+                <div className="muted" style={{ fontSize: 12 }}>Add as many filters as you want — each pulls a real field and its values. No filters = everything shows.</div>
+              </div>
+            )}
+
+            {tab === 'projects' && (
+              <div className="set-group">
+                <ModuleBlock name="Zoho Projects" on={mods.projects !== false} onToggle={() => setMod('projects', mods.projects === false)} opts={projOpts} rules={filters.projects} onRules={(r) => setRules('projects', r)} extra={
+                  <div className="seg cz-seg" style={{ marginBottom: 12 }}>
+                    <button className={'seg-btn' + (navCfg.zohoAssignee !== 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'mine' })}>Assigned to me</button>
+                    <button className={'seg-btn' + (navCfg.zohoAssignee === 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'all' })}>All tasks</button>
+                  </div>
+                } />
+              </div>
+            )}
+
+            {tab === 'focus' && (
+              <>
+                <div className="set-group">
+                  <div className="set-group-title">Focus card</div>
+                  <SettingRow label="Show the focus card by default" sub="The floating card that tells you what to work on now." on={!focusHidden} onClick={() => setFocusHidden(focusHidden ? false : true)} />
+                  <button className="btn" style={{ marginTop: 10 }} onClick={() => { try { localStorage.removeItem('focus_card_box') } catch {} ; setFocusHidden(false) }}>Reset focus card position</button>
+                </div>
+                <div className="set-group">
+                  <div className="set-group-title">Reminders</div>
+                  {remState === 'granted'
+                    ? <div className="muted">Reminders are on. You'll get a notification before each block starts.</div>
+                    : <button className="btn primary" onClick={onEnableReminders} disabled={remState === 'unsupported'}>{remState === 'unsupported' ? 'Not supported in this browser' : 'Enable reminders'}</button>}
+                </div>
+              </>
+            )}
+
+            {tab === 'general' && (
+              <div className="set-group">
+                <div className="set-group-title">Time zone</div>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>All times and the current-time line use this zone.</div>
+                <select className="cz-select" value={tz} onChange={(e) => onChangeTz(e.target.value)}>
+                  {tzList.map((z) => <option key={z} value={z}>{z.replace(/_/g, ' ')}</option>)}
+                </select>
+              </div>
+            )}
+
           </div>
         </div>
-      </div>
-
-      {detail && (
-        <ConnectionDetailModal connection={detail}
-          calendars={detail.provider === 'google' && (detail.extra?.features || ['calendar']).includes('calendar') ? (calAccounts.find((a) => a.connId === detail.id)?.calendars || []) : []}
-          selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
-          navCfg={navCfg} onNavChange={onNavChange} groups={groups}
-          onDisconnect={() => { onDisconnect(detail.id); setDetail(null) }} onClose={() => setDetail(null)} />
-      )}
-      {addGoogle && <AddGoogleModal onClose={() => setAddGoogle(false)} />}
-    </div>
-  )
-}
-
-function ConnectionDetailModal({ connection: c, calendars, selectedCalendars, toggleCalendar, navCfg, onNavChange, groups, onDisconnect, onClose }) {
-  const isZoho = c.provider === 'zoho'
-  const mods = navCfg?.modules || {}
-  const filters = navCfg?.filters || { deals: [], leads: [], projects: [] }
-  const setMod = (k, v) => onNavChange({ ...navCfg, modules: { ...mods, [k]: v } })
-  const setRules = (key, rules) => onNavChange({ ...navCfg, filters: { ...filters, [key]: rules } })
-
-  const crm = groups?.find((g) => g.id === 'zoho-crm')
-  const projGroup = groups?.find((g) => g.id === 'zoho-projects')
-  const dealsList = crm?.lists.find((l) => l.id === 'deals')
-  const leadsList = crm?.lists.find((l) => l.id === 'leads')
-  const dealOpts = fieldOptsFrom(crm?.dealFields, dealsList?.tasks)
-  const leadOpts = fieldOptsFrom(crm?.leadFields, leadsList?.tasks)
-  const projOpts = fieldOptsFrom(projGroup?.projectFields, (projGroup?.lists || []).flatMap((l) => l.tasks))
-
-  // One collapsible module block: header (name + on/off) and, when on, its filters.
-  const ModuleBlock = ({ name, moduleKey, opts, extra }) => (
-    <div className="cz-mod">
-      <div className="cz-mod-head"><span className="cz-mod-name">{name}</span><Switch on={mods[moduleKey] !== false} onClick={() => setMod(moduleKey, mods[moduleKey] === false)} /></div>
-      {mods[moduleKey] !== false && (opts || extra) && (
-        <div className="cz-mod-body">
-          {opts ? <FilterBuilder opts={opts} rules={filters[moduleKey]} onChange={(r) => setRules(moduleKey, r)} extra={extra} /> : extra}
-        </div>
-      )}
-    </div>
-  )
-
-  return (
-    <div className="modal-backdrop nested" onClick={onClose}>
-      <div className="modal customize-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="conn-detail-head" style={{ padding: '0 22px 6px' }}>
-          <div className="conn-logo lg"><ProviderIcon provider={c.provider} size={32} /></div>
-          <div><div className="modal-title">{c.account_label || c.account_email || (isZoho ? 'Zoho' : 'Google')}</div><div className="muted" style={{ textTransform: 'capitalize' }}>{c.provider}</div></div>
-        </div>
-        <div className="cz-scroll">
-          {c.provider === 'google' && (
-            <>
-              {(c.extra?.features || ['calendar', 'tasks']).includes('tasks') && (
-                <ModuleBlock name="Google Tasks" moduleKey="google" />
-              )}
-              {calendars.length > 0 && (
-                <div className="cz-sec">
-                  <div className="cz-sec-title">Calendars shown on the grid</div>
-                  {calendars.map((cal) => { const key = `${c.id}::${cal.id}`; return (
-                    <label key={cal.id} className="cal-row"><input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} /><span className="swatch" style={{ background: cal.color || '#888' }} />{cal.summary}</label>
-                  ) })}
-                </div>
-              )}
-            </>
-          )}
-          {isZoho && (
-            <>
-              <ModuleBlock name="CRM · Deals" moduleKey="deals" opts={dealOpts} />
-              <ModuleBlock name="CRM · Leads" moduleKey="leads" opts={leadOpts} />
-              <ModuleBlock name="Projects" moduleKey="projects" opts={projOpts} extra={
-                <div className="seg cz-seg" style={{ marginBottom: 12 }}>
-                  <button className={'seg-btn' + (navCfg.zohoAssignee !== 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'mine' })}>Assigned to me</button>
-                  <button className={'seg-btn' + (navCfg.zohoAssignee === 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'all' })}>All tasks</button>
-                </div>
-              } />
-            </>
-          )}
-        </div>
-        <div className="modal-actions" style={{ padding: '14px 22px 0' }}><button className="link danger" onClick={onDisconnect}>Disconnect account</button><div className="spacer" /><button className="btn primary" onClick={onClose}>Done</button></div>
-      </div>
-    </div>
-  )
-}
-
-function AddGoogleModal({ onClose }) {
-  const [feats, setFeats] = useState({ calendar: true, tasks: true })
-  const href = `/api/google/start?feats=${[feats.calendar && 'calendar', feats.tasks && 'tasks'].filter(Boolean).join(',') || 'tasks'}`
-  const none = !feats.calendar && !feats.tasks
-  return (
-    <div className="modal-backdrop nested" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="conn-detail-head"><div className="conn-logo lg"><GoogleIcon size={32} /></div><div className="modal-title">Add a Google account</div></div>
-        <div className="muted">Choose what to sync from this account. You can add as many Google accounts as you like.</div>
-        <div className="conn-featrow">
-          <label className="chk"><input type="checkbox" checked={feats.calendar} onChange={(e) => setFeats({ ...feats, calendar: e.target.checked })} /> Calendar</label>
-          <label className="chk"><input type="checkbox" checked={feats.tasks} onChange={(e) => setFeats({ ...feats, tasks: e.target.checked })} /> Tasks</label>
-        </div>
-        <div className="modal-actions"><div className="spacer" /><button className="btn" onClick={onClose}>Cancel</button><a className={'btn primary' + (none ? ' disabled' : '')} href={href} onClick={(e) => none && e.preventDefault()}>Connect Google</a></div>
       </div>
     </div>
   )
