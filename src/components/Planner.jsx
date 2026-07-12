@@ -42,7 +42,7 @@ export default function Planner() {
   const [collapsed, setCollapsed] = useState({})
   const [sections, setSections] = useState({ projects: false, tasks: false })
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [focusHidden, setFocusHidden] = useState(false)
+  const [focusHidden, setFocusHidden] = useState(() => { const c = readCache(); return c.focusHidden === undefined ? true : !!c.focusHidden })
   const [overrideBlockId, setOverrideBlockId] = useState(null)
   const [editProject, setEditProject] = useState(null)
   const [editBlock, setEditBlock] = useState(null) // { block, day }
@@ -58,10 +58,10 @@ export default function Planner() {
     try {
       localStorage.setItem(CACHE_KEY, JSON.stringify({
         tz, projects, blocks, selectedCalendars, selectedTaskLists,
-        connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho,
+        connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho, focusHidden,
       }))
     } catch {}
-  }, [tz, projects, blocks, selectedCalendars, selectedTaskLists, connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho])
+  }, [tz, projects, blocks, selectedCalendars, selectedTaskLists, connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho, focusHidden])
 
   // --- boot -----------------------------------------------------------------
   useEffect(() => {
