@@ -460,7 +460,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
   return (
     <div className="cal-scroll">
       <div className="grid" ref={ref} style={{ height }}
-        onClick={(e) => { if (e.target === ref.current) { const s = fitDrop(occAll(), yToMin(e.clientY), 60); if (s) onCreateAt(s.start, s.end) } }}
+        onDoubleClick={(e) => { if (e.target === ref.current) { const s = fitDrop(occAll(), yToMin(e.clientY), 60); if (s) onCreateAt(s.start, s.end) } }}
         onDragOver={(e) => { e.preventDefault(); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(s || { start: yToMin(e.clientY), end: yToMin(e.clientY) + SNAP_MIN, none: true }) }}
         onDragLeave={(e) => { if (e.target === ref.current) setHint(null) }}
         onDrop={(e) => { e.preventDefault(); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(null); if (s) { try { onDropPayload(JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
@@ -519,7 +519,7 @@ function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsF
             const meetings = meetingsFor(d); const buffers = buffersFrom(meetings); const bl = blocksByDay[d] || []
             return (
               <div key={d} className={'week-col' + (d === today ? ' is-today' : '')} ref={(el) => (colRefs.current[d] = el)}
-                onClick={(e) => { if (e.currentTarget === e.target) { const s = fitDrop([...meetings, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) onCreateAt(d, s.start, s.end) } }}
+                onDoubleClick={(e) => { if (e.currentTarget === e.target) { const s = fitDrop([...meetings, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) onCreateAt(d, s.start, s.end) } }}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => { e.preventDefault(); const s = fitDrop([...meetings, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) { try { onDropPayload(d, JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
                 {hours.map((h) => <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom, left: 0 }} />)}

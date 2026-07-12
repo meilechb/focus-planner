@@ -10,9 +10,12 @@
 // cannot silently clobber each other.
 
 import crypto from 'node:crypto'
-import { head, put, BlobNotFoundError } from '@vercel/blob'
+import { list, put, del } from '@vercel/blob'
 
-const BLOB_PATH = 'focus/data.json'
+// Each write creates a new uniquely-suffixed blob under this prefix; reads pick
+// the newest via the live list() API and fetch its immutable URL. This sidesteps
+// Vercel Blob's CDN cache (which would otherwise serve a stale fixed-path file).
+const BLOB_PREFIX = 'focus/data'
 
 export const DEFAULT_STATE = {
   timezone: 'America/New_York',
@@ -69,40 +72,27 @@ export function decryptSecret(value) {
 // Blob read / write (private store, optimistic concurrency)
 // ---------------------------------------------------------------------------
 
+async function listVersions() {
+  const r = await list({ prefix: BLOB_PREFIX })
+  const blobs = r.blobs || []
+  blobs.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt)) // newest first
+  return blobs
+}
+
 async function readDoc() {
-  let meta
-  try {
-    meta = await head(BLOB_PATH)
-  } catch (e) {
-    // First run: the doc doesn't exist yet.
-    if (e instanceof BlobNotFoundError || /not.?found/i.test(e?.message || '')) {
-      return { doc: emptyDoc(), etag: null }
-    }
-    throw e
-  }
-  // Fetch the content fresh, bypassing the CDN cache with a unique query param.
-  const res = await fetch(`${meta.url}?ts=${Date.now()}`, { cache: 'no-store' })
-  if (res.status === 404) return { doc: emptyDoc(), etag: null }
-  if (!res.ok) throw new Error(`blob read failed: ${res.status}`)
-  const text = await res.text()
+  const blobs = await listVersions()
+  if (!blobs.length) return { doc: emptyDoc() }
+  const res = await fetch(blobs[0].url) // unique, immutable URL — always fresh
+  if (!res.ok) return { doc: emptyDoc() }
   let doc
   try {
-    doc = JSON.parse(text)
+    doc = JSON.parse(await res.text())
   } catch {
     doc = emptyDoc()
   }
   if (!doc.state) doc.state = { ...DEFAULT_STATE }
   if (!Array.isArray(doc.connections)) doc.connections = []
-  return { doc, etag: meta.etag ?? null }
-}
-
-async function writeDoc(doc) {
-  await put(BLOB_PATH, JSON.stringify(doc), {
-    access: 'public',
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: 'application/json',
-  })
+  return { doc }
 }
 
 // Read the whole doc (for GET /api/data). Refresh tokens are NOT decrypted here.
@@ -111,12 +101,21 @@ export async function loadDoc() {
   return doc
 }
 
-// Read the whole doc, apply `mutator`, write it back. Single-user app, so
-// last-write-wins is fine; the client also serializes writes into one queue.
+// Read newest, apply `mutator`, write a fresh version, then delete older ones.
+// Single-user app, so last-write-wins is fine.
 async function mutateDoc(mutator) {
   const { doc } = await readDoc()
   const result = mutator(doc)
-  await writeDoc(doc)
+  const written = await put(`${BLOB_PREFIX}.json`, JSON.stringify(doc), {
+    access: 'public',
+    addRandomSuffix: true,
+    contentType: 'application/json',
+  })
+  // Clean up every older version, keeping only what we just wrote.
+  try {
+    const stale = (await listVersions()).filter((b) => b.url !== written.url).map((b) => b.url)
+    if (stale.length) await del(stale)
+  } catch {}
   return result
 }
 
