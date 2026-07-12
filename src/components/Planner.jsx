@@ -243,6 +243,16 @@ export default function Planner() {
     return () => window.removeEventListener('keydown', onKey)
   }, [today, view])
 
+  // Escape closes whatever modal/popover is open.
+  useEffect(() => {
+    function onEsc(e) {
+      if (e.key !== 'Escape') return
+      setEditBlock(null); setEditProject(null); setShowConn(false); setShowHelp(false)
+    }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [])
+
   // Never lose an edit: flush any pending saves synchronously when the tab is
   // hidden or closed (debounced writes may not have fired yet).
   useEffect(() => {
