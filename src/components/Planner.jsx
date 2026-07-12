@@ -23,6 +23,9 @@ function readCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) |
 const SEEN_KEY = 'focus_seen_accounts'
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
 function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
+const NAVCFG_KEY = 'focus_navcfg'
+const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, dealStatuses: null, leadStatuses: null, zohoAssignee: 'mine' }
+function readNavCfg() { try { return { ...DEFAULT_NAVCFG, ...JSON.parse(localStorage.getItem(NAVCFG_KEY) || '{}') } } catch { return { ...DEFAULT_NAVCFG } } }
 const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 const timeToMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m }
 
@@ -60,7 +63,10 @@ export default function Planner() {
   const [editBlock, setEditBlock] = useState(null) // { block, day }
   const [showConn, setShowConn] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [showCustomize, setShowCustomize] = useState(false)
+  const [navCfg, setNavCfg] = useState(readNavCfg)
   const [viewEvent, setViewEvent] = useState(null) // a Google Calendar event to inspect
+  function updateNavCfg(n) { setNavCfg(n); try { localStorage.setItem(NAVCFG_KEY, JSON.stringify(n)) } catch {} }
 
   const today = isoDate(new Date(), tz)
   const connected = connections.some((c) => c.provider === 'google')
@@ -275,7 +281,7 @@ export default function Planner() {
   useEffect(() => {
     function onEsc(e) {
       if (e.key !== 'Escape') return
-      setEditBlock(null); setEditProject(null); setShowConn(false); setShowHelp(false); setViewEvent(null)
+      setEditBlock(null); setEditProject(null); setShowConn(false); setShowHelp(false); setViewEvent(null); setShowCustomize(false)
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
@@ -377,8 +383,8 @@ export default function Planner() {
       const leads = zoho.crm?.leads || []
       const zprojects = zoho.projects || []
       const crmLists = []
-      if (deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })).filter(searchOk) })
-      if (leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })).filter(searchOk) })
+      if (deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', stage: d.status, owner: d.owner, source: 'zoho' })).filter(searchOk) })
+      if (leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', stage: d.status, owner: d.owner, source: 'zoho' })).filter(searchOk) })
       if (crmLists.length) groups.push({ id: 'zoho-crm', account: 'Zoho CRM', lists: crmLists })
       if (zprojects.length) groups.push({ id: 'zoho-projects', account: 'Zoho Projects', lists: zprojects.map((p) => ({ id: p.id, title: p.name, tasks: (p.tasks || []).map((t) => ({ ...t, source: 'zoho' })).filter(searchOk) })) })
     }
@@ -443,6 +449,7 @@ export default function Planner() {
         connections={connections} onOpenConnections={() => setShowConn(true)}
         remState={remState} onEnableReminders={enableReminders}
         tz={tz} today={today}
+        navCfg={navCfg} onCustomize={() => setShowCustomize(true)}
       />
 
       <main className="main">
@@ -511,6 +518,7 @@ export default function Planner() {
           onClose={() => setShowConn(false)} />
       )}
       {showHelp && <ShortcutsModal onClose={() => setShowHelp(false)} />}
+      {showCustomize && <CustomizeModal navCfg={navCfg} onChange={updateNavCfg} groups={displayGroups} connected={connected} hasZoho={hasZoho} onClose={() => setShowCustomize(false)} />}
       {viewEvent && <EventModal event={viewEvent} onClose={() => setViewEvent(null)} />}
     </div>
   )
@@ -736,7 +744,7 @@ function Sidebar(props) {
   const {
     projects, onNewProject, onEditProject, onDeleteProject, favorites, isFav, toggleFav, connected, hasZoho, groups,
     taskFilter, setTaskFilter, taskSearch, setTaskSearch, collapsed, setCollapsed, sections, setSections,
-    connections, onOpenConnections, remState, onEnableReminders, tz, today,
+    connections, onOpenConnections, remState, onEnableReminders, tz, today, navCfg, onCustomize,
   } = props
   function dueBadge(due) {
     if (!due) return null
@@ -763,15 +771,44 @@ function Sidebar(props) {
   }
   const dragProject = (e, p) => { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'project', projectId: p.id })); chip(e, p.name, p.color) }
   const dragTask = (e, task, g, l) => { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', task: { ...task, connId: g.id, listId: l.id } })); chip(e, task.title, g.id.startsWith('zoho') ? '#e42527' : '#2563eb') }
-  const dragBatch = (e, g, l) => { const tasks = l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })); e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: l.title, tasks })); chip(e, `${l.title} · ${tasks.length}`, g.id.startsWith('zoho') ? '#e42527' : '#2563eb') }
+  const dragBatch = (e, g, l, only) => { const tasks = (only || l.tasks).filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })); e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: l.title, tasks })); chip(e, `${l.title} · ${tasks.length}`, g.id.startsWith('zoho') ? '#e42527' : '#2563eb') }
   const dragFav = (e, f) => { e.dataTransfer.setData('application/json', JSON.stringify(f.payload)); chip(e, f.label, f.color) }
   const toggleSec = (k) => setSections({ ...sections, [k]: !sections[k] })
 
   const projEntry = (p) => ({ id: 'p:' + p.id, kind: 'project', label: p.name, color: p.color, projectId: p.id, payload: { kind: 'project', projectId: p.id } })
   const taskEntry = (t, g, l) => ({ id: `t:${g.id}:${l.id}:${t.id}`, kind: 'task', label: t.title, color: g.id.startsWith('zoho') ? '#e42527' : '#2563eb', payload: { kind: 'task', task: { ...t, connId: g.id, listId: l.id } } })
-  const zpEntry = (g, l) => ({ id: 'z:' + l.id, kind: 'zohoproject', label: l.title, color: '#e42527', payload: { kind: 'batch', title: l.title, tasks: l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) } })
-  const favIcon = (k) => (k === 'project' ? 'folder' : k === 'zohoproject' ? 'list' : 'check')
-  const taskCount = groups.reduce((a, g) => a + g.lists.reduce((b, l) => b + l.tasks.length, 0), 0)
+  // Favorite an entire list (Deals, Leads, a project, a Google list) as a batch
+  // block — this is how you "drag CRM as a block", not just individual records.
+  const listFavId = (g, l) => `zb:${g.id}:${l.id}`
+  const batchEntry = (g, l, tasks) => ({
+    id: listFavId(g, l),
+    kind: g.id === 'zoho-crm' ? 'crm' : g.id === 'zoho-projects' ? 'zohoproject' : 'tasklist',
+    label: l.title,
+    color: g.id.startsWith('zoho') ? '#e42527' : '#2563eb',
+    payload: { kind: 'batch', title: l.title, tasks: (tasks || l.tasks).filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) },
+  })
+  const favIcon = (k) => (k === 'project' ? 'folder' : k === 'zohoproject' || k === 'crm' || k === 'tasklist' ? 'list' : 'check')
+
+  // --- apply the saved "Customize nav bar" settings ------------------------
+  const mods = navCfg.modules || {}
+  const moduleOn = (g, l) => {
+    if (!g.id.startsWith('zoho')) return mods.google !== false
+    if (g.id === 'zoho-projects') return mods.projects !== false
+    if (g.id === 'zoho-crm') return l.id === 'deals' ? mods.deals !== false : mods.leads !== false
+    return true
+  }
+  // Per-list task filter: CRM status selection + Zoho Projects assignee.
+  const listTasks = (g, l) => {
+    let ts = l.tasks
+    if (g.id === 'zoho-crm' && l.id === 'deals' && Array.isArray(navCfg.dealStatuses)) ts = ts.filter((t) => navCfg.dealStatuses.includes(t.stage))
+    if (g.id === 'zoho-crm' && l.id === 'leads' && Array.isArray(navCfg.leadStatuses)) ts = ts.filter((t) => navCfg.leadStatuses.includes(t.stage))
+    if (g.id === 'zoho-projects' && navCfg.zohoAssignee !== 'all') ts = ts.filter((t) => t.mine !== false)
+    return ts
+  }
+  const visibleGroups = groups
+    .map((g) => ({ ...g, lists: g.lists.filter((l) => moduleOn(g, l)) }))
+    .filter((g) => g.lists.length)
+  const taskCount = visibleGroups.reduce((a, g) => a + g.lists.reduce((b, l) => b + listTasks(g, l).length, 0), 0)
 
   return (
     <aside className="sidebar">
@@ -826,24 +863,29 @@ function Sidebar(props) {
             </div>
           </div>
           <div className="task-search"><Icon name="search" size={15} className="search-ic" /><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
+          {(connected || hasZoho) && (
+            <button className="customize-btn" onClick={onCustomize}><Icon name="sliders" size={14} /> Customize nav bar</button>
+          )}
           {!connected && !hasZoho && (
             <div className="empty-hint">No accounts connected.<br /><button className="link" onClick={onOpenConnections}>Connect Google or Zoho</button> to see your tasks.</div>
           )}
-          {groups.map((g) => (
+          {visibleGroups.map((g) => (
             <div key={g.id} className="tgroup">
               <div className="tgroup-head"><span className="acct-dot" style={{ background: g.id.startsWith('zoho') ? '#e42527' : '#2563eb' }} />{g.account}</div>
               {g.lists.map((l) => {
-                const key = g.id + '/' + l.id; const col = collapsed[key]
-                const isZP = g.id === 'zoho-projects'
+                const key = g.id + '/' + l.id
+                const col = collapsed[key] === undefined ? true : collapsed[key] // auto-collapsed by default
+                const tasks = listTasks(g, l)
+                const favId = listFavId(g, l)
                 return (
                   <div key={l.id}>
-                    <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l)}>
+                    <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l, tasks)}>
                       <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !col })}><Icon name={col ? 'chevronRight' : 'chevronDown'} size={15} /></button>
                       <span className="tlist-title">{l.title}</span>
-                      {isZP && <button className={'star' + (isFav('z:' + l.id) ? ' on' : '')} title="Favorite project" onClick={(e) => { e.stopPropagation(); toggleFav(zpEntry(g, l)) }}><Icon name="star" size={14} filled={isFav('z:' + l.id)} /></button>}
-                      <span className="tlist-count">{l.tasks.length}</span>
+                      <button className={'star' + (isFav(favId) ? ' on' : '')} title="Favorite this list as a block" onClick={(e) => { e.stopPropagation(); toggleFav(batchEntry(g, l, tasks)) }}><Icon name="star" size={14} filled={isFav(favId)} /></button>
+                      <span className="tlist-count">{tasks.length}</span>
                     </div>
-                    {!col && l.tasks.map((t) => {
+                    {!col && tasks.map((t) => {
                       const tid = `t:${g.id}:${l.id}:${t.id}`
                       return (
                         <div key={t.id} className="titem" draggable onDragStart={(e) => dragTask(e, t, g, l)}>
@@ -854,12 +896,13 @@ function Sidebar(props) {
                         </div>
                       )
                     })}
+                    {!col && tasks.length === 0 && <div className="muted tlist-empty">{g.id === 'zoho-projects' && navCfg.zohoAssignee !== 'all' ? 'None assigned to you' : 'Empty'}</div>}
                   </div>
                 )
               })}
             </div>
           ))}
-          {(connected || hasZoho) && groups.every((g) => g.lists.every((l) => !l.tasks.length)) && (
+          {(connected || hasZoho) && visibleGroups.every((g) => g.lists.every((l) => !listTasks(g, l).length)) && (
             <div className="muted" style={{ padding: '8px' }}>No open tasks{taskSearch ? ' match your search' : ''}.</div>
           )}
         </div>
@@ -1039,6 +1082,75 @@ function ShortcutsModal({ onClose }) {
             <div key={k} className="shortcut-row"><span className="shortcut-desc">{d}</span><kbd className="kbd">{k}</kbd></div>
           ))}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// The "Customize nav bar" panel: choose modules, deal/lead statuses, assignees.
+function CustomizeModal({ navCfg, onChange, groups, connected, hasZoho, onClose }) {
+  const crm = groups.find((g) => g.id === 'zoho-crm')
+  const hasDeals = !!crm?.lists.find((l) => l.id === 'deals')
+  const hasLeads = !!crm?.lists.find((l) => l.id === 'leads')
+  const hasProjects = groups.some((g) => g.id === 'zoho-projects')
+  const dealStatuses = [...new Set((crm?.lists.find((l) => l.id === 'deals')?.tasks || []).map((t) => t.stage).filter(Boolean))].sort()
+  const leadStatuses = [...new Set((crm?.lists.find((l) => l.id === 'leads')?.tasks || []).map((t) => t.stage).filter(Boolean))].sort()
+
+  const mods = navCfg.modules || {}
+  const setMod = (k, v) => onChange({ ...navCfg, modules: { ...mods, [k]: v } })
+  // status list == null means "all"; toggling builds an explicit allow-list.
+  const toggleStatus = (field, all, s) => {
+    const cur = Array.isArray(navCfg[field]) ? navCfg[field] : all
+    const next = cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]
+    onChange({ ...navCfg, [field]: next.length === all.length ? null : next })
+  }
+  const statusOn = (field, all, s) => (Array.isArray(navCfg[field]) ? navCfg[field].includes(s) : true)
+
+  const Toggle = ({ on, onClick }) => (
+    <button className={'switch' + (on ? ' on' : '')} onClick={onClick} aria-pressed={on}><span className="knob" /></button>
+  )
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal customize-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head"><div className="modal-title">Customize nav bar</div><button className="icon-btn" onClick={onClose}><Icon name="x" size={18} /></button></div>
+        <div className="cz-scroll">
+          <div className="cz-sec">
+            <div className="cz-sec-title">Modules</div>
+            {connected && <div className="cz-row"><span>Google Tasks</span><Toggle on={mods.google !== false} onClick={() => setMod('google', mods.google === false)} /></div>}
+            {hasDeals && <div className="cz-row"><span>Zoho CRM · Deals</span><Toggle on={mods.deals !== false} onClick={() => setMod('deals', mods.deals === false)} /></div>}
+            {hasLeads && <div className="cz-row"><span>Zoho CRM · Leads</span><Toggle on={mods.leads !== false} onClick={() => setMod('leads', mods.leads === false)} /></div>}
+            {hasProjects && <div className="cz-row"><span>Zoho Projects</span><Toggle on={mods.projects !== false} onClick={() => setMod('projects', mods.projects === false)} /></div>}
+            {!hasZoho && <div className="muted" style={{ fontSize: 12 }}>Connect Zoho to see CRM and Projects modules.</div>}
+          </div>
+
+          {hasDeals && mods.deals !== false && dealStatuses.length > 0 && (
+            <div className="cz-sec">
+              <div className="cz-sec-title">Deal stages to show</div>
+              <div className="cz-chips">{dealStatuses.map((s) => (
+                <button key={s} className={'cz-chip' + (statusOn('dealStatuses', dealStatuses, s) ? ' on' : '')} onClick={() => toggleStatus('dealStatuses', dealStatuses, s)}>{s}</button>
+              ))}</div>
+            </div>
+          )}
+          {hasLeads && mods.leads !== false && leadStatuses.length > 0 && (
+            <div className="cz-sec">
+              <div className="cz-sec-title">Lead statuses to show</div>
+              <div className="cz-chips">{leadStatuses.map((s) => (
+                <button key={s} className={'cz-chip' + (statusOn('leadStatuses', leadStatuses, s) ? ' on' : '')} onClick={() => toggleStatus('leadStatuses', leadStatuses, s)}>{s}</button>
+              ))}</div>
+            </div>
+          )}
+          {hasProjects && mods.projects !== false && (
+            <div className="cz-sec">
+              <div className="cz-sec-title">Zoho Projects tasks</div>
+              <div className="seg cz-seg">
+                <button className={'seg-btn' + (navCfg.zohoAssignee !== 'all' ? ' on' : '')} onClick={() => onChange({ ...navCfg, zohoAssignee: 'mine' })}>Assigned to me</button>
+                <button className={'seg-btn' + (navCfg.zohoAssignee === 'all' ? ' on' : '')} onClick={() => onChange({ ...navCfg, zohoAssignee: 'all' })}>All tasks</button>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="modal-actions"><div className="spacer" /><button className="btn primary" onClick={onClose}>Done</button></div>
       </div>
     </div>
   )

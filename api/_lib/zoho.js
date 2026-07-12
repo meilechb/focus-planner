@@ -96,24 +96,28 @@ const CLOSED_DEAL = /clos|won|lost|dead|cancel|junk|complet/i
 const CLOSED_LEAD = /lost|junk|convert|dead|not\s*qualif/i
 
 export async function listOpenDeals(apiDomain, accessToken) {
-  const rows = await crmGet(apiDomain, accessToken, 'Deals', 'Deal_Name,Stage,Amount,Account_Name')
+  const rows = await crmGet(apiDomain, accessToken, 'Deals', 'Deal_Name,Stage,Amount,Account_Name,Owner')
   return rows
     .filter((r) => !CLOSED_DEAL.test(r.Stage || ''))
     .map((r) => ({
       id: String(r.id),
       title: r.Deal_Name || 'Deal',
       sub: [r.Account_Name?.name, r.Stage, r.Amount ? `$${r.Amount}` : ''].filter(Boolean).join(' · '),
+      status: r.Stage || 'Unknown', // deal stage — the panel filters on this
+      owner: r.Owner?.name || null,
     }))
 }
 
 export async function listOpenLeads(apiDomain, accessToken) {
-  const rows = await crmGet(apiDomain, accessToken, 'Leads', 'Full_Name,Last_Name,Company,Lead_Status')
+  const rows = await crmGet(apiDomain, accessToken, 'Leads', 'Full_Name,Last_Name,Company,Lead_Status,Owner')
   return rows
     .filter((r) => !CLOSED_LEAD.test(r.Lead_Status || ''))
     .map((r) => ({
       id: String(r.id),
       title: r.Full_Name || r.Last_Name || 'Lead',
       sub: [r.Company, r.Lead_Status].filter(Boolean).join(' · '),
+      status: r.Lead_Status || 'Unknown', // lead status — the panel filters on this
+      owner: r.Owner?.name || null,
     }))
 }
 

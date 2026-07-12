@@ -390,6 +390,28 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .rsvp-dot.tentative { background: #f9ab00; }
 .event-modal .modal-actions .link { display: inline-flex; align-items: center; gap: 5px; }
 
+/* Customize nav bar */
+.customize-btn { display: inline-flex; align-items: center; gap: 6px; width: 100%; justify-content: center; margin: 2px 0 8px; padding: 7px 10px; font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-sm); transition: background var(--t), color var(--t); }
+.customize-btn:hover { background: var(--accent-weak); color: var(--accent); border-color: transparent; }
+.customize-modal { width: 440px; max-height: 86vh; padding: 22px 0 16px; gap: 0; }
+.customize-modal .modal-head { padding: 0 22px 14px; }
+.cz-scroll { overflow-y: auto; padding: 4px 22px; display: flex; flex-direction: column; gap: 20px; }
+.cz-sec-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 10px; }
+.cz-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; font-size: 14px; color: var(--ink); }
+.cz-row + .cz-row { border-top: 1px solid var(--line); }
+.switch { width: 38px; height: 22px; border-radius: 999px; background: var(--line-2); border: none; padding: 0; position: relative; cursor: pointer; transition: background .16s; flex: none; }
+.switch.on { background: var(--accent); }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .16s; }
+.switch.on .knob { transform: translateX(16px); }
+.cz-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.cz-chip { font-size: 12px; font-weight: 550; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); transition: all var(--t); }
+.cz-chip:hover { border-color: var(--accent); color: var(--accent); }
+.cz-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.cz-seg { width: 100%; }
+.cz-seg .seg-btn { flex: 1; }
+.customize-modal .modal-actions { padding: 14px 22px 0; border-top: 1px solid var(--line); margin-top: 8px; }
+.tlist-empty { padding: 3px 8px 3px 24px; font-size: 12px; }
+
 /* connections modal (cards) */
 .conn-modal { width: 560px; max-width: 100%; max-height: 84vh; padding: 0; }
 .conn-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 12px; border-bottom: 1px solid var(--line); }
