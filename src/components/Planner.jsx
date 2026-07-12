@@ -7,6 +7,7 @@ import {
   fitDrop, clampMove, clampResizeBottom, clampResizeTop,
 } from '../lib/lib.js'
 import FocusCard from './FocusCard.jsx'
+import { Icon } from './Icon.jsx'
 
 const DEFAULT_TZ = 'America/New_York'
 const ZOOM_KEY = 'focus_zoom'
@@ -327,7 +328,7 @@ export default function Planner() {
           zoom={zoom} setZoom={setZoom} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)}
         />
         {!storageOk && <div className="banner warn">Couldn't reach storage — retrying to save your changes…</div>}
-        {banner && <div className="banner ok">{banner}<button className="icon-btn x" onClick={() => setBanner('')}>×</button></div>}
+        {banner && <div className="banner ok">{banner}<button className="icon-btn x" onClick={() => setBanner('')}><Icon name="x" size={16} /></button></div>}
 
         <div className="main-card">
         {view === 'day' && (
@@ -367,7 +368,7 @@ export default function Planner() {
           onToggleTask={(t) => applyTaskCompletion(t, t.status !== 'completed')}
           onNext={advanceToNext} onHide={() => setFocusHidden(true)} />
       )}
-      {focusHidden && <button className="focus-show" onClick={() => setFocusHidden(false)}>Focus</button>}
+      {focusHidden && <button className="focus-show" onClick={() => setFocusHidden(false)}><Icon name="focus" size={15} /> Focus</button>}
 
       {editProject && <ProjectModal project={editProject} onSave={saveProject} onClose={() => setEditProject(null)} onDelete={deleteProject} />}
       {editBlock && (
@@ -397,11 +398,11 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, si
   const gotoMonth = (n) => { const nd = new Date(d); nd.setMonth(nd.getMonth() + n); setViewDate(nd.toISOString().slice(0, 10)) }
   return (
     <div className="topbar">
-      <button className="icon-btn" title="Toggle sidebar" onClick={onToggleSidebar}>{sidebarOpen ? '⟨' : '☰'}</button>
+      <button className="icon-btn" title="Toggle sidebar" onClick={onToggleSidebar}><Icon name="sidebar" size={18} /></button>
       <button className="btn" onClick={() => setViewDate(today)}>Today</button>
       <div className="nav-group">
-        <button className="icon-btn" onClick={() => (view === 'month' ? gotoMonth(-1) : setViewDate(addDays(viewDate, -step)))}>‹</button>
-        <button className="icon-btn" onClick={() => (view === 'month' ? gotoMonth(1) : setViewDate(addDays(viewDate, step)))}>›</button>
+        <button className="icon-btn" title="Previous" onClick={() => (view === 'month' ? gotoMonth(-1) : setViewDate(addDays(viewDate, -step)))}><Icon name="chevronLeft" size={18} /></button>
+        <button className="icon-btn" title="Next" onClick={() => (view === 'month' ? gotoMonth(1) : setViewDate(addDays(viewDate, step)))}><Icon name="chevronRight" size={18} /></button>
       </div>
       <span className="today-date">{title}</span>
       <div className="spacer" />
@@ -499,7 +500,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
             <div key={b.id} className={'ev ev-block' + (draggingId === b.id ? ' dragging' : '')} style={{ top: (b.start - DAY_START) * zoom, height: bh, left: 8, right: 10, background: blockColor(b) }}
               onPointerDown={(e) => onPointerDown(e, b, 'move')}>
               <div className="ev-resize-top" onPointerDown={(e) => onPointerDown(e, b, 'resize-top')} />
-              <button className="ev-del" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete(b.id) }}>×</button>
+              <button className="ev-del" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete(b.id) }}><Icon name="x" size={12} /></button>
               {short
                 ? <div className="ev-line"><span className="ev-title">{blockName(b)}</span><span className="ev-time">{labelShort(b.start)}</span></div>
                 : <>
@@ -610,7 +611,7 @@ function Sidebar(props) {
   const projEntry = (p) => ({ id: 'p:' + p.id, kind: 'project', label: p.name, color: p.color, projectId: p.id, payload: { kind: 'project', projectId: p.id } })
   const taskEntry = (t, g, l) => ({ id: `t:${g.id}:${l.id}:${t.id}`, kind: 'task', label: t.title, color: g.id.startsWith('zoho') ? '#e42527' : '#2563eb', payload: { kind: 'task', task: { ...t, connId: g.id, listId: l.id } } })
   const zpEntry = (g, l) => ({ id: 'z:' + l.id, kind: 'zohoproject', label: l.title, color: '#e42527', payload: { kind: 'batch', title: l.title, tasks: l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) } })
-  const favIcon = (k) => (k === 'project' ? '◧' : k === 'zohoproject' ? '❑' : '✓')
+  const favIcon = (k) => (k === 'project' ? 'folder' : k === 'zohoproject' ? 'list' : 'check')
 
   return (
     <aside className="sidebar">
@@ -619,14 +620,14 @@ function Sidebar(props) {
       <div className="sb-scroll">
         {favorites.length > 0 && (
           <div className="sb-block">
-            <div className="sb-head"><span><span className="sb-ic">★</span> Favorites</span></div>
+            <div className="sb-head"><span><span className="sb-ic"><Icon name="star" size={13} filled /></span> Favorites</span></div>
             <div className="fav-grid">
               {favorites.map((f) => (
                 <div key={f.id} className="fav-card" style={{ background: f.color }} draggable onDragStart={(e) => dragFav(e, f)}
                   onClick={() => { if (f.kind === 'project') { const p = projects.find((x) => x.id === f.projectId); if (p) onEditProject(p) } }}>
-                  <span className="fav-ic">{favIcon(f.kind)}</span>
+                  <span className="fav-ic"><Icon name={favIcon(f.kind)} size={13} /></span>
                   <span className="fav-name">{f.label}</span>
-                  <button className="fav-x" title="Unfavorite" onClick={(e) => { e.stopPropagation(); toggleFav(f) }}>★</button>
+                  <button className="fav-x" title="Unfavorite" onClick={(e) => { e.stopPropagation(); toggleFav(f) }}><Icon name="star" size={12} filled /></button>
                 </div>
               ))}
             </div>
@@ -635,7 +636,7 @@ function Sidebar(props) {
 
         <div className="sb-block">
           <div className="sb-head clickable" onClick={() => toggleSec('projects')}>
-            <span><span className="sb-ic">◧</span> Projects</span><span className="caret">{sections.projects ? '▸' : '▾'}</span>
+            <span><span className="sb-ic"><Icon name="folder" size={13} /></span> Projects</span><span className="caret"><Icon name={sections.projects ? 'chevronRight' : 'chevronDown'} size={16} /></span>
           </div>
           {!sections.projects && (
             <>
@@ -644,25 +645,25 @@ function Sidebar(props) {
                   <div key={p.id} className="proj-row" draggable onDragStart={(e) => dragProject(e, p)}>
                     <span className="swatch" style={{ background: p.color }} />
                     <span className="proj-name" onClick={() => onEditProject(p)}>{p.name}</span>
-                    <button className={'star' + (isFav('p:' + p.id) ? ' on' : '')} title="Favorite" onClick={() => toggleFav(projEntry(p))}>{isFav('p:' + p.id) ? '★' : '☆'}</button>
-                    <button className="row-x" onClick={() => onDeleteProject(p.id)}>×</button>
+                    <button className={'star' + (isFav('p:' + p.id) ? ' on' : '')} title="Favorite" onClick={() => toggleFav(projEntry(p))}><Icon name="star" size={14} filled={isFav('p:' + p.id)} /></button>
+                    <button className="row-x" onClick={() => onDeleteProject(p.id)}><Icon name="x" size={14} /></button>
                   </div>
                 ))}
                 {projects.length === 0 && <div className="muted" style={{ padding: '2px 8px' }}>No projects yet — add one and drag it onto the grid.</div>}
               </div>
-              <button className="btn new-proj" onClick={onNewProject}>＋ New project</button>
+              <button className="btn new-proj" onClick={onNewProject}><Icon name="plus" size={15} /> New project</button>
             </>
           )}
         </div>
 
         <div className="sb-block">
-          <div className="sb-head"><span><span className="sb-ic">✓</span> Tasks</span>
+          <div className="sb-head"><span><span className="sb-ic"><Icon name="check" size={13} /></span> Tasks</span>
             <div className="seg">
               <button className={'seg-btn' + (taskFilter === 'all' ? ' on' : '')} onClick={() => setTaskFilter('all')}>All</button>
               <button className={'seg-btn' + (taskFilter === 'today' ? ' on' : '')} onClick={() => setTaskFilter('today')}>Today</button>
             </div>
           </div>
-          <div className="task-search"><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
+          <div className="task-search"><Icon name="search" size={15} className="search-ic" /><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
           {!connected && !hasZoho && (
             <div className="empty-hint">No accounts connected.<br /><button className="link" onClick={onOpenConnections}>Connect Google or Zoho</button> to see your tasks.</div>
           )}
@@ -675,9 +676,9 @@ function Sidebar(props) {
                 return (
                   <div key={l.id}>
                     <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l)}>
-                      <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !col })}>{col ? '▸' : '▾'}</button>
+                      <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !col })}><Icon name={col ? 'chevronRight' : 'chevronDown'} size={15} /></button>
                       <span className="tlist-title">{l.title}</span>
-                      {isZP && <button className={'star' + (isFav('z:' + l.id) ? ' on' : '')} title="Favorite project" onClick={(e) => { e.stopPropagation(); toggleFav(zpEntry(g, l)) }}>{isFav('z:' + l.id) ? '★' : '☆'}</button>}
+                      {isZP && <button className={'star' + (isFav('z:' + l.id) ? ' on' : '')} title="Favorite project" onClick={(e) => { e.stopPropagation(); toggleFav(zpEntry(g, l)) }}><Icon name="star" size={14} filled={isFav('z:' + l.id)} /></button>}
                       <span className="tlist-count">{l.tasks.length}</span>
                     </div>
                     {!col && l.tasks.map((t) => {
@@ -686,7 +687,7 @@ function Sidebar(props) {
                         <div key={t.id} className="titem" draggable onDragStart={(e) => dragTask(e, t, g, l)}>
                           <span className="tdot" />
                           <span className="titem-body">{t.title}{t.sub ? <div className="tsub">{t.sub}</div> : null}</span>
-                          <button className={'star' + (isFav(tid) ? ' on' : '')} title="Favorite" onClick={(e) => { e.stopPropagation(); toggleFav(taskEntry(t, g, l)) }}>{isFav(tid) ? '★' : '☆'}</button>
+                          <button className={'star' + (isFav(tid) ? ' on' : '')} title="Favorite" onClick={(e) => { e.stopPropagation(); toggleFav(taskEntry(t, g, l)) }}><Icon name="star" size={14} filled={isFav(tid)} /></button>
                         </div>
                       )
                     })}
@@ -703,7 +704,7 @@ function Sidebar(props) {
 
       <div className="sidebar-foot">
         <button className="btn conn-btn" onClick={onOpenConnections}>
-          <span className="gear">⚙</span> Connections{connections.length ? <span className="conn-count">{connections.length}</span> : ''}
+          <span className="gear"><Icon name="settings" size={15} /></span> Connections{connections.length ? <span className="conn-count">{connections.length}</span> : ''}
         </button>
         {remState !== 'granted' && <button className="link" style={{ marginTop: 8 }} onClick={onEnableReminders} disabled={remState === 'unsupported'}>Enable reminders</button>}
       </div>
@@ -749,7 +750,7 @@ function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCale
       <div className="modal conn-modal" onClick={(e) => e.stopPropagation()}>
         <div className="conn-modal-head">
           <div className="modal-title">Connections</div>
-          <button className="icon-btn" onClick={onClose}>×</button>
+          <button className="icon-btn" onClick={onClose}><Icon name="x" size={18} /></button>
         </div>
         <div className="conn-body">
           {connections.length > 0 && <>
@@ -762,7 +763,7 @@ function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCale
                     <div className="conn-card2-title">{c.account_label || c.provider}</div>
                     <div className="conn-card2-sub">{featBadges(c).join(' · ')}</div>
                   </div>
-                  <span className="conn-chev">›</span>
+                  <span className="conn-chev"><Icon name="chevronRight" size={18} /></span>
                 </button>
               ))}
             </div>
@@ -773,12 +774,12 @@ function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCale
             <button className="conn-card2" onClick={() => setAddGoogle(true)}>
               <div className="conn-logo"><GoogleIcon /></div>
               <div className="conn-card2-body"><div className="conn-card2-title">Google</div><div className="conn-card2-sub">Calendar & Tasks</div></div>
-              <span className="conn-chev">＋</span>
+              <span className="conn-chev"><Icon name="plus" size={18} /></span>
             </button>
             <a className="conn-card2" href="/api/zoho/start">
               <div className="conn-logo"><ZohoIcon /></div>
               <div className="conn-card2-body"><div className="conn-card2-title">Zoho</div><div className="conn-card2-sub">Deals, leads & projects</div></div>
-              <span className="conn-chev">＋</span>
+              <span className="conn-chev"><Icon name="plus" size={18} /></span>
             </a>
           </div>
         </div>

@@ -85,7 +85,18 @@ input { font-family: inherit; }
 .sb-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 10px; }
 .sb-block { padding: 8px 12px 14px; }
 .sb-block + .sb-block { border-top: 1px solid var(--line-2); }
-.sb-ic { color: var(--accent); margin-right: 6px; font-size: 12px; }
+.sb-ic { display: inline-flex; color: var(--accent); }
+.sb-head > span:first-child { display: inline-flex; align-items: center; gap: 7px; }
+
+/* ---- icon alignment + control refinements ---- */
+.ic { display: block; flex: none; }
+.caret, .star, .row-x, .ev-del, .gear, .conn-chev, .focus-x { display: inline-flex; align-items: center; justify-content: center; }
+.new-proj { gap: 6px; }
+.focus-next { display: inline-flex; align-items: center; gap: 3px; }
+.btn:active, .icon-btn:active, .seg-btn:active { transform: translateY(0.5px); }
+.density input[type=range] { -webkit-appearance: none; appearance: none; background: var(--line); border-radius: 999px; height: 4px; }
+.density input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--accent); cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.28); border: 2px solid #fff; }
+.density input[type=range]::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--accent); cursor: pointer; border: 2px solid #fff; }
 .density input[type=range] { width: 108px; accent-color: var(--accent); height: 4px; cursor: pointer; }
 .conn-btn { width: 100%; justify-content: center; }
 .conn-btn .gear { font-size: 14px; }
@@ -116,8 +127,8 @@ input { font-family: inherit; }
 
 /* task search + groups */
 .task-search { position: relative; margin: 2px 4px 8px; }
-.task-search .field { padding: 8px 10px 8px 30px; font-size: 13px; }
-.task-search::before { content: '⌕'; position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--faint); font-size: 15px; }
+.task-search .field { padding: 8px 10px 8px 32px; font-size: 13px; }
+.search-ic { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--faint); pointer-events: none; }
 .seg { display: inline-flex; background: var(--line-2); border-radius: 8px; padding: 2px; gap: 2px; }
 .seg-btn { border: none; background: transparent; padding: 5px 11px; font-size: 12.5px; font-weight: 500; color: var(--muted); border-radius: 6px; transition: all .12s; }
 .seg-btn:hover { color: var(--ink); }

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { label } from '../lib/lib.js'
+import { Icon } from './Icon.jsx'
 
 const LS_KEY = 'focus_card_box'
 const DEFAULT_BOX = { x: null, y: null, w: 300, h: 260 }
@@ -79,7 +80,7 @@ export default function FocusCard({ focus, now, onToggleTask, onNext, onHide }) 
       <div className="focus-head" onPointerDown={(e) => onPointerDown(e, 'move')}>
         <span className="focus-sub">{focus.sub}</span>
         <button className="focus-x" onClick={onHide} title="Hide" onPointerDown={(e) => e.stopPropagation()}>
-          ×
+          <Icon name="x" size={16} />
         </button>
       </div>
 
@@ -95,14 +96,14 @@ export default function FocusCard({ focus, now, onToggleTask, onNext, onHide }) 
             const done = t.status === 'completed'
             return (
               <button className={'focus-complete' + (done ? ' done' : '')} onClick={() => onToggleTask(t)}>
-                <span className="check">{done ? '✓' : ''}</span>{done ? 'Completed' : 'Mark complete'}
+                <span className="check">{done && <Icon name="check" size={12} strokeWidth={2.6} />}</span>{done ? 'Completed' : 'Mark complete'}
               </button>
             )
           })()
         ) : (
           focus.tasks.map((t) => (
             <button key={t.id} className={'focus-task' + (t.status === 'completed' ? ' done' : '')} onClick={() => onToggleTask(t)}>
-              <span className="check">{t.status === 'completed' ? '✓' : ''}</span>
+              <span className="check">{t.status === 'completed' && <Icon name="check" size={12} strokeWidth={2.6} />}</span>
               <span className="ttl">{t.title}</span>
             </button>
           ))
@@ -112,7 +113,7 @@ export default function FocusCard({ focus, now, onToggleTask, onNext, onHide }) 
       <div className="focus-foot">
         <span className="focus-time">{label(now)}</span>
         <button className="focus-next" onClick={onNext} onPointerDown={(e) => e.stopPropagation()}>
-          Next ›
+          Next <Icon name="chevronRight" size={15} />
         </button>
       </div>
 
