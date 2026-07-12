@@ -1,0 +1,92 @@
+// Multi-action Google endpoint. POST { action, ... }.
+//   "calendars" -> { accounts: [{ connId, email, calendars[] }] }
+//   "events"    { dateISO, cals:[{connId, calendarIds[]}] } -> { events[] }  (minutes from midnight)
+//   "taskLists" -> { accounts: [{ connId, email, lists[] }] }
+//   "tasks"     { lists:[{connId, listId}] } -> { tasks[] }
+//   "complete"  { connId, listId, taskId, completed } -> { ok }
+import { requireUser, listConnections, getConnection, getPublicState } from '../_lib/store.js'
+import {
+  refreshAccessToken, listCalendars, listEvents, listTaskLists, listTasks, setTaskCompleted,
+} from '../_lib/google.js'
+
+const clientId = () => process.env.GOOGLE_CLIENT_ID
+const clientSecret = () => process.env.GOOGLE_CLIENT_SECRET
+
+async function tokenFor(connId) {
+  const conn = await getConnection(connId)
+  if (!conn || conn.provider !== 'google') throw new Error('unknown google connection')
+  const accessToken = await refreshAccessToken({
+    refreshToken: conn.refresh_token,
+    clientId: clientId(),
+    clientSecret: clientSecret(),
+  })
+  return { conn, accessToken }
+}
+
+export default async function handler(req, res) {
+  try {
+    if (!requireUser(req)) return res.status(401).json({ error: 'unauthorized' })
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      return res.status(405).json({ error: 'method not allowed' })
+    }
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {}
+    const { action } = body
+
+    const googleConns = (await listConnections()).filter((c) => c.provider === 'google')
+
+    if (action === 'calendars') {
+      const accounts = []
+      for (const c of googleConns) {
+        const { accessToken } = await tokenFor(c.id)
+        accounts.push({ connId: c.id, email: c.account_email, calendars: await listCalendars(accessToken) })
+      }
+      return res.status(200).json({ accounts })
+    }
+
+    if (action === 'taskLists') {
+      const accounts = []
+      for (const c of googleConns) {
+        const { accessToken } = await tokenFor(c.id)
+        accounts.push({ connId: c.id, email: c.account_email, lists: await listTaskLists(accessToken) })
+      }
+      return res.status(200).json({ accounts })
+    }
+
+    if (action === 'events') {
+      const { dateISO, cals = [] } = body
+      const tz = (await getPublicState()).timezone || 'America/New_York'
+      const events = []
+      for (const entry of cals) {
+        const { accessToken } = await tokenFor(entry.connId)
+        for (const calendarId of entry.calendarIds || []) {
+          const evs = await listEvents({ accessToken, calendarId, dateISO, tz })
+          for (const e of evs) events.push({ ...e, connId: entry.connId, calendarId })
+        }
+      }
+      return res.status(200).json({ events })
+    }
+
+    if (action === 'tasks') {
+      const { lists = [] } = body
+      const tasks = []
+      for (const entry of lists) {
+        const { accessToken } = await tokenFor(entry.connId)
+        const ts = await listTasks({ accessToken, listId: entry.listId })
+        for (const t of ts) tasks.push({ ...t, connId: entry.connId, listId: entry.listId })
+      }
+      return res.status(200).json({ tasks })
+    }
+
+    if (action === 'complete') {
+      const { connId, listId, taskId, completed } = body
+      const { accessToken } = await tokenFor(connId)
+      await setTaskCompleted({ accessToken, listId, taskId, completed })
+      return res.status(200).json({ ok: true })
+    }
+
+    return res.status(400).json({ error: 'unknown action' })
+  } catch (e) {
+    return res.status(500).json({ error: String(e.message || e) })
+  }
+}

@@ -71,6 +71,9 @@ button { font-family: inherit; cursor: pointer; }
 .dot { width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid var(--muted); flex: none; }
 
 .conn-row { font-size: 13px; padding: 2px 0; }
+.cal-group { margin: 4px 0; display: flex; flex-direction: column; gap: 2px; }
+.cal-row { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 2px 0; cursor: pointer; }
+.cal-row input { margin: 0; }
 .btn-connect { display: block; text-align: center; background: #fff; color: var(--accent); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font-size: 13px; text-decoration: none; margin-top: 4px; }
 .sidebar-foot { margin-top: auto; }
 

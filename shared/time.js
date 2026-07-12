@@ -40,3 +40,32 @@ export function localDateISO(input, tz) {
 export function nowMinutes(tz) {
   return toLocalMinutes(new Date(), tz)
 }
+
+// Milliseconds that `tz` is ahead of UTC at the given instant.
+function tzOffsetMs(date, tz) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  })
+  const m = {}
+  for (const p of dtf.formatToParts(date)) m[p.type] = p.value
+  const asUTC = Date.UTC(+m.year, +m.month - 1, +m.day, +m.hour % 24, +m.minute, +m.second)
+  return asUTC - date.getTime()
+}
+
+// The UTC instant of a wall-clock time in `tz`.
+function zonedToUtc(y, mo, d, h, mi, tz) {
+  const ts = Date.UTC(y, mo - 1, d, h, mi, 0)
+  const off = tzOffsetMs(new Date(ts), tz)
+  return new Date(ts - off)
+}
+
+// RFC3339 {timeMin, timeMax} bounding the local day `dateISO` in `tz`, for the
+// Google Calendar events query.
+export function zonedDayRange(dateISO, tz) {
+  const [y, mo, d] = dateISO.split('-').map(Number)
+  const start = zonedToUtc(y, mo, d, 0, 0, tz)
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000)
+  return { timeMin: start.toISOString(), timeMax: end.toISOString() }
+}
