@@ -105,10 +105,14 @@ export default async function handler(req, res) {
     if (action === 'tasks') {
       const { lists = [] } = body
       const tasks = []
+      // Cache access tokens per connection so we don't refresh once per list.
+      const tokenCache = {}
       for (const entry of lists) {
-        const { accessToken } = await tokenFor(entry.connId)
-        const ts = await listTasks({ accessToken, listId: entry.listId })
-        for (const t of ts) tasks.push({ ...t, connId: entry.connId, listId: entry.listId })
+        try {
+          if (!tokenCache[entry.connId]) tokenCache[entry.connId] = (await tokenFor(entry.connId)).accessToken
+          const ts = await listTasks({ accessToken: tokenCache[entry.connId], listId: entry.listId })
+          for (const t of ts) tasks.push({ ...t, connId: entry.connId, listId: entry.listId })
+        } catch { /* skip a failing list rather than zeroing everything */ }
       }
       return res.status(200).json({ tasks })
     }

@@ -29,21 +29,20 @@ export default function Planner() {
   const [taskAccounts, setTaskAccounts] = useState(() => readCache().taskAccounts || [])
   const [selectedCalendars, setSelectedCalendars] = useState(() => readCache().selectedCalendars || [])
   const [selectedTaskLists, setSelectedTaskLists] = useState(() => readCache().selectedTaskLists || [])
-  const [rangeEvents, setRangeEvents] = useState(() => readCache().rangeEvents || []) // events across the visible range, each with .date
-  const [todayEvents, setTodayEvents] = useState(() => readCache().todayEvents || []) // events for today (drives the focus card)
+  const [eventsByDate, setEventsByDate] = useState(() => readCache().eventsByDate || {}) // { 'YYYY-MM-DD': [events] } — cached per day for instant paint
   const [gtasks, setGtasks] = useState(() => readCache().gtasks || [])
   const [zoho, setZoho] = useState(() => readCache().zoho || { crm: { deals: [], leads: [] }, projects: [], errors: [] })
 
   const [viewDate, setViewDate] = useState(() => isoDate(new Date(), readCache().tz || DEFAULT_TZ))
-  const [view, setView] = useState('day') // day | week | month
+  const [view, setView] = useState(() => readCache().view || 'day') // day | week | month
   const [zoom, setZoom] = useState(() => Math.min(3, Math.max(1, Number(localStorage.getItem(ZOOM_KEY)) || 1.5)))
   const [now, setNow] = useState(() => nowMinutes(DEFAULT_TZ))
 
   const [taskFilter, setTaskFilter] = useState('all')
   const [taskSearch, setTaskSearch] = useState('')
   const [collapsed, setCollapsed] = useState({})
-  const [sections, setSections] = useState({ projects: false, tasks: false })
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sections, setSections] = useState(() => readCache().sections || { projects: false, tasks: false })
+  const [sidebarOpen, setSidebarOpen] = useState(() => readCache().sidebarOpen !== false)
   const [focusHidden, setFocusHidden] = useState(() => { const c = readCache(); return c.focusHidden === undefined ? true : !!c.focusHidden })
   const [overrideBlockId, setOverrideBlockId] = useState(null)
   const [editProject, setEditProject] = useState(null)
@@ -58,19 +57,27 @@ export default function Planner() {
   // instant paint on next load — cache everything the UI renders from
   useEffect(() => {
     try {
+      // prune cached events to a rolling window so localStorage stays small
+      const lo = addDays(today, -31), hi = addDays(today, 92)
+      const ebd = {}
+      for (const k in eventsByDate) if (k >= lo && k <= hi) ebd[k] = eventsByDate[k]
       localStorage.setItem(CACHE_KEY, JSON.stringify({
         tz, projects, blocks, favorites, selectedCalendars, selectedTaskLists,
-        connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho, focusHidden,
+        connections, calAccounts, taskAccounts, eventsByDate: ebd, gtasks, zoho, focusHidden,
+        view, sidebarOpen, sections,
       }))
     } catch {}
-  }, [tz, projects, blocks, favorites, selectedCalendars, selectedTaskLists, connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho, focusHidden])
+  }, [tz, projects, blocks, favorites, selectedCalendars, selectedTaskLists, connections, calAccounts, taskAccounts, eventsByDate, gtasks, zoho, focusHidden, today, view, sidebarOpen, sections])
 
   // --- boot -----------------------------------------------------------------
   useEffect(() => {
     ;(async () => {
       let state = null
+      // fire both requests in parallel
+      const dataP = api.get('/api/data')
+      const connP = api.get('/api/connections').catch(() => ({ connections: [] }))
       try {
-        const r = await api.get('/api/data')
+        const r = await dataP
         state = r.state
         if (state.timezone) setTz(state.timezone)
         setProjects(state.projects || [])
@@ -89,7 +96,7 @@ export default function Planner() {
         }
       } catch { setStorageOk(false) }
       let conns = []
-      try { conns = (await api.get('/api/connections')).connections || []; setConnections(conns) } catch {}
+      try { conns = (await connP).connections || []; setConnections(conns) } catch {}
       if (conns.some((c) => c.provider === 'google')) await loadGoogleMeta(state)
       if (conns.some((c) => c.provider === 'zoho')) loadZoho()
       const p = new URLSearchParams(location.search)
@@ -150,30 +157,46 @@ export default function Planner() {
     return Object.entries(byConn).map(([connId, calendarIds]) => ({ connId, calendarIds }))
   }
 
+  // Merge a fetched events[] into the by-date cache, marking every date in the
+  // range as loaded (empty array) so we don't refetch known-empty days.
+  function mergeEvents(startISO, endISO, events) {
+    setEventsByDate((prev) => {
+      const next = { ...prev }
+      let d = startISO
+      while (d <= endISO) { next[d] = []; d = addDays(d, 1) }
+      for (const e of events) (next[e.date] ||= []).push(e)
+      return next
+    })
+  }
+
   useEffect(() => {
-    if (!connected || !selectedCalendars.length) { setRangeEvents([]); return }
+    if (!connected || !selectedCalendars.length) return
     let alive = true
     api.post('/api/google/data', { action: 'eventsRange', startISO: range.start, endISO: range.end, cals: calsPayload() })
-      .then((r) => alive && setRangeEvents(r.events || [])).catch(() => alive && setRangeEvents([]))
+      .then((r) => { if (alive) mergeEvents(range.start, range.end, r.events || []) })
+      .catch(() => {}) // keep cached events on transient error
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, selectedCalendars, range.start, range.end])
 
   useEffect(() => {
-    if (!connected || !selectedCalendars.length) { setTodayEvents([]); return }
+    if (!connected || !selectedCalendars.length) return
+    if (today >= range.start && today <= range.end) return // already covered by the range fetch
     let alive = true
     api.post('/api/google/data', { action: 'eventsRange', startISO: today, endISO: today, cals: calsPayload() })
-      .then((r) => alive && setTodayEvents(r.events || [])).catch(() => alive && setTodayEvents([]))
+      .then((r) => { if (alive) mergeEvents(today, today, r.events || []) })
+      .catch(() => {})
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, selectedCalendars, today])
+  }, [connected, selectedCalendars, today, range.start, range.end])
 
   useEffect(() => {
     if (!connected || !selectedTaskLists.length) { setGtasks([]); return }
     const lists = selectedTaskLists.map((k) => { const [connId, listId] = k.split('::'); return { connId, listId } })
     let alive = true
     api.post('/api/google/data', { action: 'tasks', lists })
-      .then((r) => alive && setGtasks(r.tasks || [])).catch(() => alive && setGtasks([]))
+      .then((r) => { if (alive) setGtasks(r.tasks || []) })
+      .catch(() => {}) // keep cached tasks on transient error (don't zero the sidebar)
     return () => { alive = false }
   }, [connected, selectedTaskLists])
 
@@ -182,6 +205,10 @@ export default function Planner() {
   // keyboard shortcuts: T=today, D/W/M=views, ←/→=navigate
   useEffect(() => {
     function onKey(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        if (e.target.closest && e.target.closest('input, textarea')) return
+        e.preventDefault(); undoBlocks(); return
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return
       if (e.target.closest && e.target.closest('input, textarea, .modal')) return
       const k = e.key.toLowerCase()
@@ -238,8 +265,16 @@ export default function Planner() {
   }
 
   function updateProjects(n) { setProjects(n); saveKey('projects', n) }
-  function updateBlocks(n) { setBlocks(n); saveKey('blocks', n) }
+  const undoStack = useRef([])
+  function updateBlocks(n) { undoStack.current.push(blocks); if (undoStack.current.length > 60) undoStack.current.shift(); setBlocks(n); saveKey('blocks', n) }
+  function undoBlocks() { const prev = undoStack.current.pop(); if (prev) { setBlocks(prev); saveKey('blocks', prev) } }
   const dayBlocks = (d) => blocks[d] || []
+  function duplicateBlock(day, block) {
+    const occ = [...meetingsFor(day), ...buffersFrom(meetingsFor(day)), ...(blocks[day] || [])]
+    const dur = block.end - block.start
+    const slot = fitDrop(occ, block.end, dur) || fitDrop(occ, DAY_START, dur)
+    if (slot) addBlockTo(day, { ...block, id: uuid(), start: slot.start, end: slot.end })
+  }
   function setDayBlocks(d, list) { updateBlocks({ ...blocks, [d]: list }) }
   function addBlockTo(d, b) { updateBlocks({ ...blocks, [d]: [...(blocks[d] || []), b] }) }
   function updateBlock(d, b) { updateBlocks({ ...blocks, [d]: (blocks[d] || []).map((x) => (x.id === b.id ? b : x)) }) }
@@ -259,7 +294,7 @@ export default function Planner() {
   function toggleCalendar(k) { const n = selectedCalendars.includes(k) ? selectedCalendars.filter((x) => x !== k) : [...selectedCalendars, k]; setSelectedCalendars(n); saveKey('selectedCalendars', n) }
   function toggleTaskList(k) { const n = selectedTaskLists.includes(k) ? selectedTaskLists.filter((x) => x !== k) : [...selectedTaskLists, k]; setSelectedTaskLists(n); saveKey('selectedTaskLists', n) }
 
-  const meetingsFor = (d) => (connected ? rangeEvents.filter((e) => e.date === d) : [])
+  const meetingsFor = (d) => (connected ? (eventsByDate[d] || []) : [])
 
   // --- task groups ----------------------------------------------------------
   const displayGroups = useMemo(() => {
@@ -287,9 +322,9 @@ export default function Planner() {
   const focus = useMemo(() => {
     const todays = blocks[today] || []
     if (overrideBlockId) { const b = todays.find((x) => x.id === overrideBlockId); if (b) return computeFocus({ blocks: [b], meetings: [], buffers: [], now: b.start, projects }) }
-    const m = connected ? todayEvents : []
+    const m = connected ? (eventsByDate[today] || []) : []
     return computeFocus({ blocks: todays, meetings: m, buffers: buffersFrom(m), now, projects })
-  }, [blocks, today, overrideBlockId, connected, todayEvents, now, projects])
+  }, [blocks, today, overrideBlockId, connected, eventsByDate, now, projects])
 
   function advanceToNext() {
     const todays = [...(blocks[today] || [])].sort((a, b) => a.start - b.start)
@@ -346,6 +381,7 @@ export default function Planner() {
         <TopBar
           view={view} setView={setView} viewDate={viewDate} setViewDate={setViewDate} today={today}
           zoom={zoom} setZoom={setZoom} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          planned={(dayBlocks(viewDate)).reduce((n, b) => n + (b.end - b.start), 0)}
         />
         {!storageOk && <div className="banner warn">Couldn't reach storage — retrying to save your changes…</div>}
         {banner && <div className="banner ok">{banner}<button className="icon-btn x" onClick={() => setBanner('')}><Icon name="x" size={16} /></button></div>}
@@ -395,6 +431,7 @@ export default function Planner() {
         <BlockModal entry={editBlock} projects={projects}
           onSave={(b) => { updateBlock(editBlock.day, b); setEditBlock(null) }}
           onDelete={() => { deleteBlock(editBlock.day, editBlock.block.id); setEditBlock(null) }}
+          onDuplicate={() => { duplicateBlock(editBlock.day, editBlock.block); setEditBlock(null) }}
           onClose={() => setEditBlock(null)} />
       )}
       {showConn && (
@@ -408,7 +445,8 @@ export default function Planner() {
 
 /* ========================================================================== */
 
-function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, sidebarOpen, onToggleSidebar }) {
+function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, sidebarOpen, onToggleSidebar, planned }) {
+  const plannedLabel = planned ? (planned >= 60 ? `${Math.floor(planned / 60)}h${planned % 60 ? ' ' + (planned % 60) + 'm' : ''}` : `${planned}m`) : ''
   const step = view === 'week' ? 7 : view === 'month' ? 30 : 1
   const d = new Date(viewDate + 'T12:00:00')
   let title
@@ -425,6 +463,7 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, si
         <button className="icon-btn" title="Next" onClick={() => (view === 'month' ? gotoMonth(1) : setViewDate(addDays(viewDate, step)))}><Icon name="chevronRight" size={18} /></button>
       </div>
       <span className="today-date">{title}</span>
+      {view === 'day' && plannedLabel && <span className="planned-chip" title="Time planned today">{plannedLabel} planned</span>}
       <div className="spacer" />
       {view !== 'month' && (
         <div className="density">
@@ -890,7 +929,7 @@ function ProjectModal({ project, onSave, onClose, onDelete }) {
   )
 }
 
-function BlockModal({ entry, projects, onSave, onDelete, onClose }) {
+function BlockModal({ entry, projects, onSave, onDelete, onDuplicate, onClose }) {
   const [b, setB] = useState({ ...entry.block })
   const isProject = !!b.projectId
   const proj = projects.find((p) => p.id === b.projectId)
@@ -907,7 +946,7 @@ function BlockModal({ entry, projects, onSave, onDelete, onClose }) {
         </div>
         {!isProject && <div><div className="field-label">Color</div><div className="swatches">{PALETTE.map((c) => <button key={c} className={'swatch-btn' + (b.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setB({ ...b, color: c })} />)}</div></div>}
         {Array.isArray(b.tasks) && b.tasks.length > 0 && <div className="muted">{b.tasks.length} task{b.tasks.length > 1 ? 's' : ''} in this block</div>}
-        <div className="modal-actions"><button className="link danger" onClick={onDelete}>Delete</button><div className="spacer" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(b)}>Save</button></div>
+        <div className="modal-actions"><button className="link danger" onClick={onDelete}>Delete</button>{onDuplicate && <button className="link" onClick={onDuplicate}>Duplicate</button>}<div className="spacer" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(b)}>Save</button></div>
       </div>
     </div>
   )
