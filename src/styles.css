@@ -82,6 +82,7 @@ input { font-family: inherit; }
 
 /* ---- sidebar ---- */
 .sidebar { background: var(--panel); border-right: 1px solid var(--line); overflow: hidden; display: flex; flex-direction: column; }
+.sb-pinned { flex: none; border-bottom: 1px solid var(--line-2); }
 .sb-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 10px; }
 .sb-block { padding: 8px 12px 14px; }
 .sb-block + .sb-block { border-top: 1px solid var(--line-2); }
@@ -272,8 +273,10 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .hour-label { position: absolute; left: 0; top: -8px; width: 50px; text-align: right; font-size: 11px; color: #6b7280; font-weight: 500; font-variant-numeric: tabular-nums; }
 
 .ev { position: absolute; border-radius: 7px; overflow: hidden; padding: 3px 8px; }
-.ev-meeting { background: #fff; border: 1px solid #dfe3ea; border-left: 3px solid var(--accent); color: var(--ink-2); box-shadow: var(--shadow-sm); }
+.ev-meeting { background: #fff; border: 1px solid #dfe3ea; border-left: 3px solid var(--accent); color: var(--ink-2); box-shadow: var(--shadow-sm); cursor: pointer; }
+.ev-meeting:hover { box-shadow: var(--shadow-md); border-color: #c6cdda; }
 .ev-meeting .ev-title { color: var(--ink); }
+.ev-cam { position: absolute; top: 4px; right: 6px; color: var(--accent); opacity: .85; z-index: 2; }
 .ev-buffer { background: repeating-linear-gradient(45deg, rgba(230,124,0,.10), rgba(230,124,0,.10) 6px, rgba(230,124,0,.16) 6px, rgba(230,124,0,.16) 12px); border: 1px dashed rgba(214,120,10,.5); color: #a15c00; font-size: 11px; }
 .ev-block { color: #fff; box-shadow: var(--shadow-sm); cursor: grab; user-select: none; }
 .ev-block:hover { box-shadow: var(--shadow-md); }
@@ -329,6 +332,12 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .focus-x { background: none; border: none; color: #fff; font-size: 18px; opacity: .8; }
 .focus-label { font-size: 22px; font-weight: 700; margin: 8px 0 2px; line-height: 1.15; letter-spacing: -.01em; }
 .focus-note { font-size: 12.5px; opacity: .9; margin-bottom: 4px; }
+.focus-loc { display: flex; align-items: center; gap: 5px; font-size: 12px; opacity: .9; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-meeting { display: flex; gap: 8px; margin-top: 10px; }
+.focus-join { display: inline-flex; align-items: center; gap: 6px; background: #fff; color: var(--ink); border: none; border-radius: 9px; padding: 7px 14px; font-size: 13px; font-weight: 650; text-decoration: none; transition: transform .1s, box-shadow .12s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.focus-join:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+.focus-details { background: rgba(255,255,255,.2); border: none; color: #fff; border-radius: 9px; padding: 7px 14px; font-size: 13px; font-weight: 600; }
+.focus-details:hover { background: rgba(255,255,255,.3); }
 .focus-tasks { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
 .focus-task { display: flex; align-items: center; gap: 9px; background: rgba(255,255,255,.14); border: none; color: #fff; border-radius: 9px; padding: 8px 10px; text-align: left; font-size: 13px; transition: background .12s; }
 .focus-task:hover { background: rgba(255,255,255,.22); }
@@ -358,6 +367,28 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .swatch-btn:hover { transform: scale(1.1); }
 .swatch-btn.on { border-color: var(--ink); }
 .modal-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+
+/* event viewer */
+.event-modal { width: 440px; max-height: 86vh; overflow-y: auto; gap: 11px; }
+.event-modal .modal-title { line-height: 1.25; }
+.ev-meta { display: flex; align-items: flex-start; gap: 10px; font-size: 13.5px; color: var(--ink-2); line-height: 1.4; }
+.ev-meta-ic { flex: none; color: var(--muted); margin-top: 1px; }
+.ev-dur { color: var(--muted); }
+.ev-join { display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; margin-top: 2px; }
+.ev-desc-wrap { border-top: 1px solid var(--line); padding-top: 12px; }
+.ev-desc-wrap .field-label { display: flex; align-items: center; gap: 5px; }
+.ev-desc { font-size: 13px; color: var(--ink-2); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow-y: auto; }
+.ev-link-text { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+.ev-link-text:hover { text-decoration: underline; }
+.ev-guests { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.ev-guest { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+.ev-guest-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.ev-guest-rsvp { font-size: 11px; color: var(--muted); flex: none; }
+.rsvp-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--line-2); }
+.rsvp-dot.accepted { background: #34a853; }
+.rsvp-dot.declined { background: #ea4335; }
+.rsvp-dot.tentative { background: #f9ab00; }
+.event-modal .modal-actions .link { display: inline-flex; align-items: center; gap: 5px; }
 
 /* connections modal (cards) */
 .conn-modal { width: 560px; max-width: 100%; max-height: 84vh; padding: 0; }
@@ -418,14 +449,16 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .star { background: none; border: none; color: var(--faint); font-size: 14px; padding: 0 2px; opacity: 0; }
 .proj-row:hover .star { opacity: 1; }
 .star.on { color: #f5b301; opacity: 1; }
-.fav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-.fav-card { position: relative; display: flex; align-items: center; gap: 8px; border: none; border-radius: 12px; padding: 13px 12px; cursor: grab; color: #fff; box-shadow: var(--shadow-sm); overflow: hidden; transition: transform .1s, box-shadow .12s; }
-.fav-card::after { content: ''; position: absolute; inset: 0; background: linear-gradient(155deg, rgba(255,255,255,.20), rgba(255,255,255,0) 62%); pointer-events: none; }
+.fav-grid { display: grid; grid-template-columns: 1fr; gap: 7px; max-height: 42vh; overflow-y: auto; margin: 0 -2px; padding: 0 2px; }
+.fav-card { position: relative; display: flex; align-items: flex-start; gap: 9px; border: none; border-radius: 11px; padding: 11px 12px; cursor: grab; color: #fff; box-shadow: var(--shadow-sm); overflow: hidden; transition: transform .1s, box-shadow .12s; }
+.fav-card::after { content: ''; position: absolute; inset: 0; background: linear-gradient(155deg, rgba(255,255,255,.18), rgba(255,255,255,0) 62%); pointer-events: none; }
 .fav-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
-.fav-ic { position: relative; z-index: 1; font-size: 13px; opacity: .95; }
-.fav-name { position: relative; z-index: 1; flex: 1; font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 1.5px rgba(0,0,0,.18); }
-.fav-x { position: relative; z-index: 1; background: none; border: none; color: #fff; opacity: 0; font-size: 12px; padding: 0; }
+.fav-ic { position: relative; z-index: 1; opacity: .95; margin-top: 1px; flex: none; }
+.fav-name { position: relative; z-index: 1; flex: 1; min-width: 0; font-size: 12.5px; font-weight: 650; line-height: 1.3; text-shadow: 0 1px 1.5px rgba(0,0,0,.18);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.fav-x { position: relative; z-index: 1; background: none; border: none; color: #fff; opacity: 0; padding: 0; flex: none; margin-top: 1px; transition: opacity .12s; }
 .fav-card:hover .fav-x { opacity: .9; }
+.fav-x:hover { opacity: 1 !important; transform: scale(1.1); }
 .drag-chip { position: fixed; top: -1000px; left: -1000px; background: var(--chip, var(--accent)); color: #fff; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: var(--shadow-md); white-space: nowrap; pointer-events: none; }
 
 /* focus card single-task complete button */

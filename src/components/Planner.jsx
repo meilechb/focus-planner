@@ -11,6 +11,13 @@ import { Icon } from './Icon.jsx'
 
 const DEFAULT_TZ = 'America/New_York'
 const ZOOM_KEY = 'focus_zoom'
+const VIEW_START = 8 * 60 // default: scroll so the day starts at 8 AM
+const VIEW_HOURS = 10 // default density: fit ~8 AM–6 PM in view
+// Default density: pick px-per-minute so ~10 hours fill the visible calendar.
+function defaultZoom() {
+  const h = (typeof window !== 'undefined' ? window.innerHeight : 900) - 150
+  return Math.min(3, Math.max(1, h / (VIEW_HOURS * 60)))
+}
 const CACHE_KEY = 'focus_cache'
 function readCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}') } catch { return {} } }
 const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
@@ -35,7 +42,7 @@ export default function Planner() {
 
   const [viewDate, setViewDate] = useState(() => isoDate(new Date(), readCache().tz || DEFAULT_TZ))
   const [view, setView] = useState(() => readCache().view || 'day') // day | week | month
-  const [zoom, setZoom] = useState(() => Math.min(3, Math.max(1, Number(localStorage.getItem(ZOOM_KEY)) || 1.5)))
+  const [zoom, setZoom] = useState(() => { const s = Number(localStorage.getItem(ZOOM_KEY)); return s ? Math.min(3, Math.max(1, s)) : defaultZoom() })
   const [now, setNow] = useState(() => nowMinutes(DEFAULT_TZ))
 
   const [taskFilter, setTaskFilter] = useState('all')
@@ -50,6 +57,7 @@ export default function Planner() {
   const [editBlock, setEditBlock] = useState(null) // { block, day }
   const [showConn, setShowConn] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [viewEvent, setViewEvent] = useState(null) // a Google Calendar event to inspect
 
   const today = isoDate(new Date(), tz)
   const connected = connections.some((c) => c.provider === 'google')
@@ -77,7 +85,7 @@ export default function Planner() {
       let state = null
       // fire both requests in parallel
       const dataP = api.get('/api/data')
-      const connP = api.get('/api/connections').catch(() => ({ connections: [] }))
+      const connP = api.get('/api/connections').catch(() => null) // null = fetch failed (keep cache)
       try {
         const r = await dataP
         state = r.state
@@ -97,8 +105,11 @@ export default function Planner() {
           if (Object.keys(cache.blocks || {}).length) { setBlocks(cache.blocks); saveKey('blocks', cache.blocks) }
         }
       } catch { setStorageOk(false) }
-      let conns = []
-      try { conns = (await connP).connections || []; setConnections(conns) } catch {}
+      // On a failed connections fetch, keep whatever we cached instead of wiping
+      // the user's connected accounts to zero.
+      const cr = await connP
+      let conns = readCache().connections || []
+      if (cr) { conns = cr.connections || []; setConnections(conns) }
       if (conns.some((c) => c.provider === 'google')) await loadGoogleMeta(state)
       if (conns.some((c) => c.provider === 'zoho')) loadZoho()
       const p = new URLSearchParams(location.search)
@@ -121,7 +132,7 @@ export default function Planner() {
       setTaskAccounts(tl.accounts || [])
       // Auto-select everything for any account that has NOTHING selected yet
       // (a newly connected account), without clobbering per-account choices.
-      const baseCals = state?.selectedCalendars || []
+      const baseCals = state?.selectedCalendars || readCache().selectedCalendars || []
       const nextCals = [...baseCals]
       for (const a of cal.accounts || []) {
         const keys = a.calendars.map((c) => `${a.connId}::${c.id}`)
@@ -129,7 +140,7 @@ export default function Planner() {
       }
       if (nextCals.length !== baseCals.length) { setSelectedCalendars(nextCals); saveKey('selectedCalendars', nextCals) }
 
-      const baseLists = state?.selectedTaskLists || []
+      const baseLists = state?.selectedTaskLists || readCache().selectedTaskLists || []
       const nextLists = [...baseLists]
       for (const a of tl.accounts || []) {
         const keys = a.lists.map((l) => `${a.connId}::${l.id}`)
@@ -247,7 +258,7 @@ export default function Planner() {
   useEffect(() => {
     function onEsc(e) {
       if (e.key !== 'Escape') return
-      setEditBlock(null); setEditProject(null); setShowConn(false); setShowHelp(false)
+      setEditBlock(null); setEditProject(null); setShowConn(false); setShowHelp(false); setViewEvent(null)
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
@@ -434,6 +445,7 @@ export default function Planner() {
             onDelete={(id) => deleteBlock(viewDate, id)}
             onCreateAt={(start, end) => { const b = { id: uuid(), start, end, title: 'Focus', color: ACCENT, tasks: [] }; addBlockTo(viewDate, b); setEditBlock({ block: b, day: viewDate }) }}
             onDropPayload={(payload, start, end) => { const b = blockFromPayload(payload, start, end); if (b) addBlockTo(viewDate, b) }}
+            onOpenEvent={setViewEvent}
           />
         )}
         {view === 'week' && (
@@ -444,6 +456,7 @@ export default function Planner() {
             onEdit={(b, d) => setEditBlock({ block: b, day: d })}
             onCreateAt={(d, start, end) => { const b = { id: uuid(), start, end, title: 'Focus', color: ACCENT, tasks: [] }; addBlockTo(d, b); setEditBlock({ block: b, day: d }) }}
             onDropPayload={(d, payload, start, end) => { const b = blockFromPayload(payload, start, end); if (b) addBlockTo(d, b) }}
+            onOpenEvent={setViewEvent}
           />
         )}
         {view === 'month' && (
@@ -459,6 +472,7 @@ export default function Planner() {
       {!focusHidden && (
         <FocusCard focus={focus} now={now}
           onToggleTask={(t) => applyTaskCompletion(t, t.status !== 'completed')}
+          onOpenEvent={() => focus.event && setViewEvent(focus.event)}
           onNext={advanceToNext} onHide={() => setFocusHidden(true)} />
       )}
       {focusHidden && <button className="focus-show" onClick={() => setFocusHidden(false)}><Icon name="focus" size={15} /> Focus</button>}
@@ -477,6 +491,7 @@ export default function Planner() {
           onClose={() => setShowConn(false)} />
       )}
       {showHelp && <ShortcutsModal onClose={() => setShowHelp(false)} />}
+      {viewEvent && <EventModal event={viewEvent} onClose={() => setViewEvent(null)} />}
     </div>
   )
 }
@@ -519,7 +534,7 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, si
 }
 
 /* ---- Day grid (full drag / resize / click-create) ---- */
-function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockName, onCommit, onEdit, onDelete, onCreateAt, onDropPayload }) {
+function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockName, onCommit, onEdit, onDelete, onCreateAt, onDropPayload, onOpenEvent }) {
   const ref = useRef(null)
   const scrollRef = useRef(null)
   const drag = useRef(null)
@@ -528,9 +543,9 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
   const [hint, setHint] = useState(null)
   const [draggingId, setDraggingId] = useState(null)
   useEffect(() => { latest.current = blocks; setLocalBlocks(blocks) }, [blocks])
-  // scroll current time into view on first open of today
+  // Open the day at 8 AM (top of the working window) by default.
   useEffect(() => {
-    if (scrollRef.current && day === today) scrollRef.current.scrollTop = Math.max(0, (now - DAY_START) * zoom - 150)
+    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, (VIEW_START - DAY_START) * zoom)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const buffers = useMemo(() => buffersFrom(meetings), [meetings])
@@ -589,7 +604,9 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
         {hint && <div className={'drop-hint' + (hint.none ? ' invalid' : '')} style={{ top: (hint.start - DAY_START) * zoom, height: (hint.end - hint.start) * zoom }}>{hint.none ? 'No room' : `${label(hint.start)} – ${label(hint.end)}`}</div>}
         {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 8, right: 10 }}>Prep · {b.forTitle}</div>)}
         {meetings.map((m) => { const mh = (m.end - m.start) * zoom; return (
-          <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: mh, left: 8, right: 10 }} title={m.title}>
+          <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: mh, left: 8, right: 10 }} title={m.title}
+            onClick={() => onOpenEvent && onOpenEvent(m)}>
+            {m.link && <span className="ev-cam" title="Has a video link"><Icon name="video" size={12} /></span>}
             {mh < 40
               ? <div className="ev-line"><span className="ev-title">{m.title}</span><span className="ev-time">{labelShort(m.start)}</span></div>
               : <><div className="ev-title">{m.title}</div><div className="ev-time">{label(m.start)} – {label(m.end)}</div></>}
@@ -622,14 +639,14 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
 }
 
 /* ---- Week grid ---- */
-function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsFor, blockColor, blockName, onOpenDay, onEdit, onCreateAt, onDropPayload }) {
+function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsFor, blockColor, blockName, onOpenDay, onEdit, onCreateAt, onDropPayload, onOpenEvent }) {
   const days = weekDays(viewDate)
   const height = (DAY_END - DAY_START) * zoom
   const hours = []; for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
   const colRefs = useRef({})
   const scrollRef = useRef(null)
   useEffect(() => {
-    if (scrollRef.current && days.includes(today)) scrollRef.current.scrollTop = Math.max(0, (now - DAY_START) * zoom - 150)
+    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, (VIEW_START - DAY_START) * zoom)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const yToMin = (day, clientY) => clamp(snap(DAY_START + (clientY - colRefs.current[day].getBoundingClientRect().top) / zoom), DAY_START, DAY_END - SNAP_MIN)
@@ -658,7 +675,7 @@ function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsF
                 onDrop={(e) => { e.preventDefault(); const s = fitDrop([...meetings, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) { try { onDropPayload(d, JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
                 {hours.map((h) => <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom, left: 0 }} />)}
                 {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 2, right: 2 }} />)}
-                {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 2, right: 2 }} title={`${m.title} · ${label(m.start)}`}><div className="ev-title">{m.title}</div>{(m.end - m.start) * zoom > 28 && <div className="ev-time">{label(m.start)}</div>}</div>)}
+                {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 2, right: 2 }} title={`${m.title} · ${label(m.start)}`} onClick={(e) => { e.stopPropagation(); onOpenEvent && onOpenEvent(m) }}><div className="ev-title">{m.title}</div>{(m.end - m.start) * zoom > 28 && <div className="ev-time">{label(m.start)}</div>}</div>)}
                 {bl.map((b) => <div key={b.id} className="ev ev-block" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 2, right: 2, background: blockColor(b) }} onClick={(e) => { e.stopPropagation(); onEdit(b, d) }} title={`${blockName(b)} · ${label(b.start)}`}><div className="ev-title">{blockName(b)}</div>{(b.end - b.start) * zoom > 28 && <div className="ev-time">{label(b.start)}</div>}</div>)}
                 {d === today && now >= DAY_START && now <= DAY_END && <div className="now-line" style={{ top: (now - DAY_START) * zoom, left: 0 }}><span className="now-dot" /></div>}
               </div>
@@ -740,23 +757,25 @@ function Sidebar(props) {
     <aside className="sidebar">
       <div className="brand"><span className="dot" /> Focus Planner</div>
 
-      <div className="sb-scroll">
-        {favorites.length > 0 && (
+      {favorites.length > 0 && (
+        <div className="sb-pinned">
           <div className="sb-block">
-            <div className="sb-head"><span><span className="sb-ic"><Icon name="star" size={13} filled /></span> Favorites</span></div>
+            <div className="sb-head"><span><span className="sb-ic"><Icon name="star" size={13} filled /></span> Favorites{favorites.length > 0 && <span className="sec-count">{favorites.length}</span>}</span></div>
             <div className="fav-grid">
               {favorites.map((f) => (
                 <div key={f.id} className="fav-card" style={{ background: f.color }} draggable onDragStart={(e) => dragFav(e, f)}
                   onClick={() => { if (f.kind === 'project') { const p = projects.find((x) => x.id === f.projectId); if (p) onEditProject(p) } }}>
-                  <span className="fav-ic"><Icon name={favIcon(f.kind)} size={13} /></span>
+                  <span className="fav-ic"><Icon name={favIcon(f.kind)} size={14} /></span>
                   <span className="fav-name">{f.label}</span>
-                  <button className="fav-x" title="Unfavorite" onClick={(e) => { e.stopPropagation(); toggleFav(f) }}><Icon name="star" size={12} filled /></button>
+                  <button className="fav-x" title="Unfavorite" onClick={(e) => { e.stopPropagation(); toggleFav(f) }}><Icon name="star" size={13} filled /></button>
                 </div>
               ))}
             </div>
           </div>
-        )}
+        </div>
+      )}
 
+      <div className="sb-scroll">
         <div className="sb-block">
           <div className="sb-head clickable" onClick={() => toggleSec('projects')}>
             <span><span className="sb-ic"><Icon name="folder" size={13} /></span> Projects{projects.length > 0 && <span className="sec-count">{projects.length}</span>}</span><span className="caret"><Icon name={sections.projects ? 'chevronRight' : 'chevronDown'} size={16} /></span>
@@ -1002,6 +1021,81 @@ function ShortcutsModal({ onClose }) {
         </div>
       </div>
     </div>
+  )
+}
+
+function EventModal({ event, onClose }) {
+  const e = event
+  const rsvpText = { accepted: 'Going', declined: 'Declined', tentative: 'Maybe', needsAction: 'Awaiting' }
+  const going = (e.attendees || []).filter((a) => a.status === 'accepted').length
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal event-modal" onClick={(ev) => ev.stopPropagation()}>
+        <div className="modal-head"><div className="modal-title">{e.title}</div><button className="icon-btn" onClick={onClose}><Icon name="x" size={18} /></button></div>
+
+        <div className="ev-meta">
+          <span className="ev-meta-ic"><Icon name="clock" size={16} /></span>
+          <span>{label(e.start)} – {label(e.end)}<span className="ev-dur"> · {fmtDur(e.end - e.start)}</span></span>
+        </div>
+        {e.location && (
+          <div className="ev-meta">
+            <span className="ev-meta-ic"><Icon name="mapPin" size={16} /></span>
+            {/^https?:\/\//.test(e.location)
+              ? <a href={e.location} target="_blank" rel="noreferrer" className="ev-link-text">{e.location}</a>
+              : <span>{e.location}</span>}
+          </div>
+        )}
+        {e.organizer && (
+          <div className="ev-meta"><span className="ev-meta-ic"><Icon name="users" size={16} /></span><span>{e.organizer}{e.attendees?.length ? ` · ${e.attendees.length} guest${e.attendees.length > 1 ? 's' : ''}${going ? `, ${going} going` : ''}` : ''}</span></div>
+        )}
+
+        {e.link && (
+          <a className="btn primary ev-join" href={e.link} target="_blank" rel="noreferrer"><Icon name="video" size={16} /> Join meeting</a>
+        )}
+
+        {e.description && (
+          <div className="ev-desc-wrap">
+            <div className="field-label"><Icon name="align" size={13} /> Details</div>
+            <div className="ev-desc">{linkify(e.description)}</div>
+          </div>
+        )}
+
+        {e.attendees?.length > 0 && (
+          <div className="ev-guests">
+            {e.attendees.slice(0, 8).map((a, i) => (
+              <div key={i} className="ev-guest">
+                <span className={'rsvp-dot ' + (a.status || 'needsAction')} />
+                <span className="ev-guest-name">{a.name || a.email}{a.self ? ' (you)' : ''}</span>
+                <span className="ev-guest-rsvp">{rsvpText[a.status] || ''}</span>
+              </div>
+            ))}
+            {e.attendees.length > 8 && <div className="muted" style={{ padding: '2px 0' }}>+{e.attendees.length - 8} more</div>}
+          </div>
+        )}
+
+        <div className="modal-actions">
+          <div className="spacer" />
+          {e.htmlLink && <a className="link" href={e.htmlLink} target="_blank" rel="noreferrer"><Icon name="externalLink" size={14} /> Open in Google Calendar</a>}
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function fmtDur(min) {
+  if (min < 60) return `${min} min`
+  const h = Math.floor(min / 60), m = min % 60
+  return m ? `${h}h ${m}m` : `${h}h`
+}
+
+// Turn bare URLs in event descriptions into clickable links.
+function linkify(text) {
+  const parts = String(text).split(/(https?:\/\/[^\s]+)/g)
+  return parts.map((p, i) =>
+    /^https?:\/\//.test(p)
+      ? <a key={i} href={p} target="_blank" rel="noreferrer" className="ev-link-text">{p}</a>
+      : <React.Fragment key={i}>{p}</React.Fragment>,
   )
 }
 

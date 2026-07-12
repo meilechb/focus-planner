@@ -101,6 +101,49 @@ export async function listCalendars(accessToken) {
   }))
 }
 
+// Pull a usable meeting link out of an event (Meet, Zoom, etc.).
+function meetingLink(ev) {
+  if (ev.hangoutLink) return ev.hangoutLink
+  const eps = ev.conferenceData?.entryPoints || []
+  const video = eps.find((e) => e.entryPointType === 'video')
+  if (video?.uri) return video.uri
+  const phone = eps.find((e) => e.entryPointType === 'video' || e.entryPointType === 'more')
+  return phone?.uri || null
+}
+
+// Google descriptions can hold light HTML; flatten to readable plain text.
+function cleanDesc(d) {
+  if (!d) return null
+  let s = String(d)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+  s = s.replace(/\n{3,}/g, '\n\n').trim()
+  return s ? s.slice(0, 4000) : null
+}
+
+function mapEvent(ev, tz, withDate) {
+  const out = {
+    id: ev.id,
+    title: ev.summary || '(no title)',
+    start: toLocalMinutes(ev.start.dateTime, tz),
+    end: toLocalMinutes(ev.end.dateTime, tz),
+    location: ev.location || null,
+    description: cleanDesc(ev.description),
+    link: meetingLink(ev),
+    htmlLink: ev.htmlLink || null,
+    organizer: ev.organizer?.displayName || ev.organizer?.email || null,
+    attendees: Array.isArray(ev.attendees)
+      ? ev.attendees.filter((a) => !a.resource).slice(0, 30)
+          .map((a) => ({ email: a.email || null, name: a.displayName || null, self: !!a.self, status: a.responseStatus || null }))
+      : [],
+  }
+  if (withDate) out.date = localDateISO(ev.start.dateTime, tz)
+  return out
+}
+
 // Events on `dateISO` (owner tz), timed events only, as minutes-from-midnight.
 export async function listEvents({ accessToken, calendarId, dateISO, tz }) {
   const { timeMin, timeMax } = zonedDayRange(dateISO, tz)
@@ -119,12 +162,7 @@ export async function listEvents({ accessToken, calendarId, dateISO, tz }) {
   for (const ev of data.items || []) {
     if (ev.status === 'cancelled') continue
     if (!ev.start?.dateTime || !ev.end?.dateTime) continue // skip all-day
-    out.push({
-      id: ev.id,
-      title: ev.summary || '(no title)',
-      start: toLocalMinutes(ev.start.dateTime, tz),
-      end: toLocalMinutes(ev.end.dateTime, tz),
-    })
+    out.push(mapEvent(ev, tz, false))
   }
   return out
 }
@@ -149,13 +187,7 @@ export async function listEventsRange({ accessToken, calendarId, startISO, endIS
   for (const ev of data.items || []) {
     if (ev.status === 'cancelled') continue
     if (!ev.start?.dateTime || !ev.end?.dateTime) continue // skip all-day
-    out.push({
-      id: ev.id,
-      title: ev.summary || '(no title)',
-      date: localDateISO(ev.start.dateTime, tz),
-      start: toLocalMinutes(ev.start.dateTime, tz),
-      end: toLocalMinutes(ev.end.dateTime, tz),
-    })
+    out.push(mapEvent(ev, tz, true))
   }
   return out
 }

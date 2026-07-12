@@ -199,7 +199,20 @@ function within(now, item) {
 export function computeFocus({ blocks = [], meetings = [], buffers = [], now, projects = [] }) {
   const meeting = meetings.find((m) => within(now, m))
   if (meeting) {
-    return { color: '#616161', label: meeting.title || 'Meeting', sub: 'In a meeting', tasks: [], block: null }
+    return {
+      color: '#616161', label: meeting.title || 'Meeting', sub: 'In a meeting',
+      tasks: [], block: null, event: meeting, link: meeting.link || null, location: meeting.location || null,
+    }
+  }
+  // Not in a meeting now, but one is coming up soon — surface it so the link is handy.
+  const soon = meetings
+    .filter((m) => m.start > now && m.start - now <= 30)
+    .sort((a, b) => a.start - b.start)[0]
+  if (soon) {
+    return {
+      color: '#E67C00', label: soon.title || 'Upcoming meeting', sub: `Starts at ${label(soon.start)}`,
+      tasks: [], block: null, event: soon, link: soon.link || null, location: soon.location || null,
+    }
   }
 
   const buffer = buffers.find((b) => within(now, b))

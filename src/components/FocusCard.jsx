@@ -13,7 +13,7 @@ function loadBox() {
   }
 }
 
-export default function FocusCard({ focus, now, onToggleTask, onNext, onHide }) {
+export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNext, onHide }) {
   const [box, setBox] = useState(loadBox)
   const drag = useRef(null)
 
@@ -86,6 +86,18 @@ export default function FocusCard({ focus, now, onToggleTask, onNext, onHide }) 
 
       <div className="focus-label">{focus.label}</div>
       {focus.note ? <div className="focus-note">{focus.note}</div> : null}
+      {focus.location ? <div className="focus-loc"><Icon name="mapPin" size={12} /> {focus.location}</div> : null}
+
+      {focus.event && (
+        <div className="focus-meeting">
+          {focus.link && (
+            <a className="focus-join" href={focus.link} target="_blank" rel="noreferrer" onPointerDown={(e) => e.stopPropagation()}>
+              <Icon name="video" size={14} /> Join
+            </a>
+          )}
+          <button className="focus-details" onClick={onOpenEvent} onPointerDown={(e) => e.stopPropagation()}>Details</button>
+        </div>
+      )}
 
       <div className="focus-tasks">
         {!focus.tasks?.length ? (
