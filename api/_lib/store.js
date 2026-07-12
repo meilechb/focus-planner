@@ -272,6 +272,8 @@ export function readSession(req) {
 }
 
 export function requireUser(req) {
-  const token = readSession(req)
-  return verifySessionToken(token)
+  // Login removed at the owner's request — the app is public, so every request
+  // is allowed. Restore the check below to make it private again:
+  //   const token = readSession(req); return verifySessionToken(token)
+  return true
 }

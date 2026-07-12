@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { api, logout } from '../lib/api.js'
+import { api } from '../lib/api.js'
 import { MOCK_MEETINGS, MOCK_TASK_GROUPS } from '../lib/mock.js'
 import {
   PALETTE, DAY_START, DAY_END, SNAP_MIN, ACCENT,
@@ -11,7 +11,7 @@ import FocusCard from './FocusCard.jsx'
 const DEFAULT_TZ = 'America/New_York'
 const ck = (connId, id) => `${connId}::${id}` // composite key for multi-account
 
-export default function Planner({ onLoggedOut }) {
+export default function Planner() {
   const [tz, setTz] = useState(DEFAULT_TZ)
   const [projects, setProjects] = useState([])
   const [blocks, setBlocks] = useState({})
@@ -338,8 +338,6 @@ export default function Planner({ onLoggedOut }) {
     }
   }
 
-  async function doLogout() { await logout().catch(() => {}); onLoggedOut() }
-
   // --- render ---------------------------------------------------------------
   const gridHeight = (DAY_END - DAY_START) * zoom
   const hours = []
@@ -355,7 +353,7 @@ export default function Planner({ onLoggedOut }) {
         connections={connections}
         calAccounts={calAccounts} selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
         showCalPicker={showCalPicker} setShowCalPicker={setShowCalPicker}
-        remState={remState} onEnableReminders={enableReminders} onLogout={doLogout}
+        remState={remState} onEnableReminders={enableReminders}
       />
 
       <main className="main">
@@ -457,7 +455,7 @@ function Sidebar(props) {
     projects, onAddProject, onEditProject, onDeleteProject,
     connected, groups, taskFilter, setTaskFilter, collapsed, setCollapsed,
     connections, calAccounts, selectedCalendars, toggleCalendar, showCalPicker, setShowCalPicker,
-    remState, onEnableReminders, onLogout,
+    remState, onEnableReminders,
   } = props
   const [newName, setNewName] = useState('')
 
@@ -568,7 +566,6 @@ function Sidebar(props) {
         )}
       </section>
 
-      <div className="sidebar-foot"><button className="link-btn" onClick={onLogout}>Log out</button></div>
     </aside>
   )
 }
