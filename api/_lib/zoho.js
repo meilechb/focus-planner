@@ -18,6 +18,7 @@ export const ZOHO_SCOPES = [
   'ZohoProjects.projects.READ',
   'ZohoProjects.tasks.READ',
   'ZohoCRM.modules.READ',
+  'ZohoCRM.settings.fields.READ', // read the org's real field definitions for the filter builder
   'AaaServer.profile.READ',
 ]
 
@@ -104,9 +105,13 @@ function fieldVal(v) {
   return String(v)
 }
 
-// Filterable fields for a module: every picklist field, plus Owner. Each has a
-// list of possible values so the panel can offer them even when no record uses
-// them yet. Returns [] if the metadata call fails (panel falls back to data).
+// Field types the user can pick a value from (enumerable). Everything else
+// (free text, numbers, dates, textarea) isn't offered as a select-a-value filter.
+const FILTER_TYPES = new Set(['picklist', 'multiselectpicklist', 'lookup', 'ownerlookup', 'boolean'])
+
+// Real filterable fields for a module, straight from the org's field metadata.
+// Each carries its picklist values (when it has them). Requires the
+// ZohoCRM.settings.fields.READ scope; returns [] if unavailable.
 export async function listCrmFields(apiDomain, accessToken, module) {
   try {
     const url = `${apiDomain}/crm/v8/settings/fields?module=${module}&type=all`
@@ -115,12 +120,10 @@ export async function listCrmFields(apiDomain, accessToken, module) {
     const data = await res.json().catch(() => ({}))
     const out = []
     for (const f of data.fields || []) {
-      if (f.api_name === 'Owner') { out.push({ api_name: 'Owner', label: 'Owner', values: [] }); continue }
-      if ((f.data_type === 'picklist' || f.data_type === 'multiselectpicklist') && Array.isArray(f.pick_list_values)) {
-        out.push({ api_name: f.api_name, label: f.field_label || f.api_name, values: f.pick_list_values.map((v) => v.display_value).filter(Boolean) })
-      }
+      if (!FILTER_TYPES.has(f.data_type)) continue
+      out.push({ api_name: f.api_name, label: f.field_label || f.api_name, values: (f.pick_list_values || []).map((v) => v.display_value).filter(Boolean) })
     }
-    return out.slice(0, 25)
+    return out.slice(0, 45)
   } catch { return [] }
 }
 
@@ -187,13 +190,22 @@ export async function listProjectTasks(portalId, projectId, accessToken) {
   const d = await projGet(`/portal/${portalId}/projects/${projectId}/tasks/`, accessToken)
   return (d.tasks || [])
     .filter((t) => !(t.status && /closed/i.test(t.status.type || t.status.name || '')))
-    .map((t) => ({
-      id: String(t.id),
-      title: t.name,
-      status: 'needsAction',
-      // Owner names for "assigned to me" filtering (Zoho returns details.owners).
-      owners: (t.details?.owners || []).map((o) => o.name).filter(Boolean),
-    }))
+    .map((t) => {
+      const owners = (t.details?.owners || []).map((o) => o.name).filter(Boolean)
+      return {
+        id: String(t.id),
+        title: t.name,
+        status: 'needsAction',
+        owners, // for "assigned to me" filtering
+        // Real project-task fields the filter builder can use.
+        fields: {
+          Status: t.status?.name || null,
+          Priority: t.priority || null,
+          Owner: owners.join(', ') || null,
+          'Task List': t.tasklist?.name || null,
+        },
+      }
+    })
 }
 
 // Task ids assigned to the authenticated user in a portal (Zoho's own "My Tasks").

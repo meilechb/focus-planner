@@ -24,7 +24,7 @@ const SEEN_KEY = 'focus_seen_accounts'
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
 function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
 const NAVCFG_KEY = 'focus_navcfg'
-const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, dealFilter: null, leadFilter: null, zohoAssignee: 'mine' }
+const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, zohoAssignee: 'mine', filters: { deals: [], leads: [], projects: [] } }
 function readNavCfg() { try { return { ...DEFAULT_NAVCFG, ...JSON.parse(localStorage.getItem(NAVCFG_KEY) || '{}') } } catch { return { ...DEFAULT_NAVCFG } } }
 const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 const timeToMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m }
@@ -389,7 +389,17 @@ export default function Planner() {
       if (deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, source: 'zoho' })).filter(searchOk) })
       if (leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, source: 'zoho' })).filter(searchOk) })
       if (crmLists.length) groups.push({ id: 'zoho-crm', account: 'Zoho CRM', lists: crmLists, dealFields: zoho.crm?.dealFields || [], leadFields: zoho.crm?.leadFields || [] })
-      if (zprojects.length) groups.push({ id: 'zoho-projects', account: 'Zoho Projects', lists: zprojects.map((p) => ({ id: p.id, title: p.name, tasks: (p.tasks || []).map((t) => ({ ...t, source: 'zoho' })).filter(searchOk) })) })
+      if (zprojects.length) {
+        // Derive filterable project fields (Status, Priority, Owner, Task List)
+        // from the values actually present across all project tasks.
+        const allTasks = zprojects.flatMap((p) => p.tasks || [])
+        const projFieldKeys = [...new Set(allTasks.flatMap((t) => Object.keys(t.fields || {})))]
+        const projectFields = projFieldKeys.map((k) => ({
+          api_name: k, label: k,
+          values: [...new Set(allTasks.map((t) => t.fields?.[k]).filter(Boolean))].sort(),
+        })).filter((f) => f.values.length)
+        groups.push({ id: 'zoho-projects', account: 'Zoho Projects', projectFields, lists: zprojects.map((p) => ({ id: p.id, title: p.name, tasks: (p.tasks || []).map((t) => ({ ...t, source: 'zoho' })).filter(searchOk) })) })
+      }
     }
     return groups
   }, [connected, hasZoho, taskAccounts, gtasks, zoho, taskFilter, taskSearch, tz, today])
@@ -800,15 +810,19 @@ function Sidebar(props) {
     if (g.id === 'zoho-crm') return l.id === 'deals' ? mods.deals !== false : mods.leads !== false
     return true
   }
-  // CRM filter: no field chosen -> show open records (default); a chosen field ->
-  // show only records whose value for that field is in the selected set.
-  const crmFilter = (t, cfg) => (!cfg || !cfg.field ? t.open !== false : (cfg.values || []).includes(t.fields?.[cfg.field]))
-  // Per-list task filter: CRM field selection + Zoho Projects assignee.
+  // A record passes a module's filters when it matches EVERY rule (AND). Each
+  // rule matches when the record's value for that field is one of the selected
+  // values. No rules = show everything.
+  const filters = navCfg.filters || {}
+  const passesFilters = (t, rules) => !rules || rules.every((r) => !r.values?.length || r.values.includes(t.fields?.[r.field]))
   const listTasks = (g, l) => {
     let ts = l.tasks
-    if (g.id === 'zoho-crm' && l.id === 'deals') ts = ts.filter((t) => crmFilter(t, navCfg.dealFilter))
-    if (g.id === 'zoho-crm' && l.id === 'leads') ts = ts.filter((t) => crmFilter(t, navCfg.leadFilter))
-    if (g.id === 'zoho-projects' && navCfg.zohoAssignee !== 'all') ts = ts.filter((t) => t.mine !== false)
+    if (g.id === 'zoho-crm' && l.id === 'deals') ts = ts.filter((t) => passesFilters(t, filters.deals))
+    if (g.id === 'zoho-crm' && l.id === 'leads') ts = ts.filter((t) => passesFilters(t, filters.leads))
+    if (g.id === 'zoho-projects') {
+      if (navCfg.zohoAssignee !== 'all') ts = ts.filter((t) => t.mine !== false)
+      ts = ts.filter((t) => passesFilters(t, filters.projects))
+    }
     return ts
   }
   const visibleGroups = groups
@@ -1093,66 +1107,72 @@ function ShortcutsModal({ onClose }) {
   )
 }
 
-// The "Customize nav bar" panel: choose modules, then for Deals/Leads pick which
-// field to filter by and which of its values to show, plus the Projects assignee.
+// The "Customize nav bar" panel: toggle modules, and build as many filters as you
+// want per module — each pulls a real field from your CRM/Projects and its values.
 function CustomizeModal({ navCfg, onChange, groups, connected, hasZoho, onClose }) {
   const crm = groups.find((g) => g.id === 'zoho-crm')
+  const projGroup = groups.find((g) => g.id === 'zoho-projects')
   const dealsList = crm?.lists.find((l) => l.id === 'deals')
   const leadsList = crm?.lists.find((l) => l.id === 'leads')
   const hasDeals = !!dealsList
   const hasLeads = !!leadsList
-  const hasProjects = groups.some((g) => g.id === 'zoho-projects')
+  const hasProjects = !!projGroup
 
-  // Field options come from Zoho's field metadata; fall back to the status field
-  // derived from the records if metadata is unavailable. Values combine the
-  // field's picklist with any values actually present in the data.
-  const fieldOptions = (metaFields, list, fallbackField, fallbackLabel) => {
-    const meta = (metaFields || []).length ? metaFields : [{ api_name: fallbackField, label: fallbackLabel, values: [] }]
-    const tasks = list?.tasks || []
+  // Field options for a module: prefer real field metadata (needs the settings
+  // scope); otherwise derive fields+values from the records themselves. Values
+  // always merge the field's picklist with values present in the data.
+  const optsFrom = (metaFields, tasks) => {
+    const t = tasks || []
+    let meta = metaFields || []
+    if (!meta.length) meta = [...new Set(t.flatMap((x) => Object.keys(x.fields || {})))].map((k) => ({ api_name: k, label: k, values: [] }))
     return meta.map((f) => {
-      const present = [...new Set(tasks.map((t) => t.fields?.[f.api_name]).filter(Boolean))]
-      const values = [...new Set([...(f.values || []), ...present])]
-      return { api_name: f.api_name, label: f.label, values }
+      const present = t.map((x) => x.fields?.[f.api_name]).filter(Boolean)
+      return { api_name: f.api_name, label: f.label, values: [...new Set([...(f.values || []), ...present])].sort() }
     }).filter((f) => f.values.length)
   }
-  const dealFields = fieldOptions(crm?.dealFields, dealsList, 'Stage', 'Stage')
-  const leadFields = fieldOptions(crm?.leadFields, leadsList, 'Lead_Status', 'Lead Status')
+  const dealOpts = optsFrom(crm?.dealFields, dealsList?.tasks)
+  const leadOpts = optsFrom(crm?.leadFields, leadsList?.tasks)
+  const projOpts = optsFrom(projGroup?.projectFields, (projGroup?.lists || []).flatMap((l) => l.tasks))
 
   const mods = navCfg.modules || {}
+  const filters = navCfg.filters || { deals: [], leads: [], projects: [] }
   const setMod = (k, v) => onChange({ ...navCfg, modules: { ...mods, [k]: v } })
-  // filterKey: 'dealFilter' | 'leadFilter'. cfg = { field, values } | null (= open only).
-  const setField = (filterKey, opts, apiName) => {
-    if (!apiName) return onChange({ ...navCfg, [filterKey]: null })
-    const values = opts.find((f) => f.api_name === apiName)?.values || []
-    onChange({ ...navCfg, [filterKey]: { field: apiName, values } })
-  }
-  const toggleValue = (filterKey, v) => {
-    const cfg = navCfg[filterKey]; if (!cfg) return
-    const values = cfg.values.includes(v) ? cfg.values.filter((x) => x !== v) : [...cfg.values, v]
-    onChange({ ...navCfg, [filterKey]: { ...cfg, values } })
-  }
+  const setRules = (key, rules) => onChange({ ...navCfg, filters: { ...filters, [key]: rules } })
 
   const Toggle = ({ on, onClick }) => (
     <button className={'switch' + (on ? ' on' : '')} onClick={onClick} aria-pressed={on}><span className="knob" /></button>
   )
-  const CrmFilter = ({ label, filterKey, opts }) => {
-    const cfg = navCfg[filterKey]
-    const active = opts.find((f) => f.api_name === cfg?.field)
+
+  // The reusable filter builder for one module.
+  const FilterBuilder = ({ label, moduleKey, opts, extra }) => {
+    const rules = filters[moduleKey] || []
+    const addRule = () => { const f = opts[0]; if (f) setRules(moduleKey, [...rules, { field: f.api_name, values: [...f.values] }]) }
+    const removeRule = (i) => setRules(moduleKey, rules.filter((_, j) => j !== i))
+    const changeField = (i, api) => { const f = opts.find((o) => o.api_name === api); setRules(moduleKey, rules.map((r, j) => (j === i ? { field: api, values: [...(f?.values || [])] } : r))) }
+    const toggleVal = (i, v) => setRules(moduleKey, rules.map((r, j) => (j === i ? { ...r, values: r.values.includes(v) ? r.values.filter((x) => x !== v) : [...r.values, v] } : r)))
     return (
       <div className="cz-sec">
         <div className="cz-sec-title">{label}</div>
-        <div className="cz-field">
-          <span className="cz-field-lbl">Filter by</span>
-          <select className="cz-select" value={cfg?.field || ''} onChange={(e) => setField(filterKey, opts, e.target.value)}>
-            <option value="">Open only (default)</option>
-            {opts.map((f) => <option key={f.api_name} value={f.api_name}>{f.label}</option>)}
-          </select>
-        </div>
-        {active && (
-          <div className="cz-chips">{active.values.map((v) => (
-            <button key={v} className={'cz-chip' + (cfg.values.includes(v) ? ' on' : '')} onClick={() => toggleValue(filterKey, v)}>{v}</button>
-          ))}</div>
-        )}
+        {extra}
+        {rules.map((r, i) => {
+          const opt = opts.find((o) => o.api_name === r.field)
+          return (
+            <div key={i} className="cz-rule">
+              <div className="cz-rule-head">
+                <select className="cz-select" value={r.field} onChange={(e) => changeField(i, e.target.value)}>
+                  {opts.map((o) => <option key={o.api_name} value={o.api_name}>{o.label}</option>)}
+                </select>
+                <button className="cz-rule-x" title="Remove filter" onClick={() => removeRule(i)}><Icon name="x" size={15} /></button>
+              </div>
+              <div className="cz-chips">{(opt?.values || []).map((v) => (
+                <button key={v} className={'cz-chip' + (r.values.includes(v) ? ' on' : '')} onClick={() => toggleVal(i, v)}>{v}</button>
+              ))}</div>
+            </div>
+          )
+        })}
+        {opts.length > 0
+          ? <button className="cz-add" onClick={addRule}><Icon name="plus" size={14} /> Add filter</button>
+          : <div className="muted" style={{ fontSize: 12 }}>No fields available yet — reconnect Zoho to load your fields.</div>}
       </div>
     )
   }
@@ -1171,16 +1191,15 @@ function CustomizeModal({ navCfg, onChange, groups, connected, hasZoho, onClose 
             {!hasZoho && <div className="muted" style={{ fontSize: 12 }}>Connect Zoho to see CRM and Projects modules.</div>}
           </div>
 
-          {hasDeals && mods.deals !== false && dealFields.length > 0 && <CrmFilter label="Deals" filterKey="dealFilter" opts={dealFields} />}
-          {hasLeads && mods.leads !== false && leadFields.length > 0 && <CrmFilter label="Leads" filterKey="leadFilter" opts={leadFields} />}
+          {hasDeals && mods.deals !== false && <FilterBuilder label="Deals filters" moduleKey="deals" opts={dealOpts} />}
+          {hasLeads && mods.leads !== false && <FilterBuilder label="Leads filters" moduleKey="leads" opts={leadOpts} />}
           {hasProjects && mods.projects !== false && (
-            <div className="cz-sec">
-              <div className="cz-sec-title">Zoho Projects tasks</div>
-              <div className="seg cz-seg">
+            <FilterBuilder label="Projects filters" moduleKey="projects" opts={projOpts} extra={
+              <div className="seg cz-seg" style={{ marginBottom: 12 }}>
                 <button className={'seg-btn' + (navCfg.zohoAssignee !== 'all' ? ' on' : '')} onClick={() => onChange({ ...navCfg, zohoAssignee: 'mine' })}>Assigned to me</button>
                 <button className={'seg-btn' + (navCfg.zohoAssignee === 'all' ? ' on' : '')} onClick={() => onChange({ ...navCfg, zohoAssignee: 'all' })}>All tasks</button>
               </div>
-            </div>
+            } />
           )}
         </div>
         <div className="modal-actions"><div className="spacer" /><button className="btn primary" onClick={onClose}>Done</button></div>
