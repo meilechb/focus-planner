@@ -640,6 +640,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
   const [localBlocks, setLocalBlocks] = useState(blocks)
   const [hint, setHint] = useState(null)
   const [draggingId, setDraggingId] = useState(null)
+  const [hover, setHover] = useState(null) // ghost "add block" affordance on empty hover
   useEffect(() => { latest.current = blocks; setLocalBlocks(blocks) }, [blocks])
   // Open the day at 8 AM (top of the working window) by default.
   useEffect(() => {
@@ -693,12 +694,19 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
     <div className="cal-scroll" ref={scrollRef}>
       <div className="grid" ref={ref} style={{ height }}
         onDoubleClick={(e) => { if (e.target === ref.current) { const s = fitDrop(occAll(), yToMin(e.clientY), 60); if (s) onCreateAt(s.start, s.end) } }}
-        onDragOver={(e) => { e.preventDefault(); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(s || { start: yToMin(e.clientY), end: yToMin(e.clientY) + SNAP_MIN, none: true }) }}
+        onMouseMove={(e) => { if (drag.current) return; const t = e.target; const empty = t === ref.current || t.classList?.contains('hour-row') || t.classList?.contains('hour-label'); if (empty) { const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHover(s) } else if (hover) setHover(null) }}
+        onMouseLeave={() => setHover(null)}
+        onDragOver={(e) => { e.preventDefault(); setHover(null); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(s || { start: yToMin(e.clientY), end: yToMin(e.clientY) + SNAP_MIN, none: true }) }}
         onDragLeave={(e) => { if (e.target === ref.current) setHint(null) }}
         onDrop={(e) => { e.preventDefault(); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(null); if (s) { try { onDropPayload(JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
         {hours.map((h) => (
           <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom }}><span className="hour-label">{hourLabel(h)}</span></div>
         ))}
+        {hover && !hint && !draggingId && (
+          <div className="create-ghost" style={{ top: (hover.start - DAY_START) * zoom, height: (hover.end - hover.start) * zoom }}>
+            <span><Icon name="plus" size={13} /> Double-click to block time</span>
+          </div>
+        )}
         {hint && <div className={'drop-hint' + (hint.none ? ' invalid' : '')} style={{ top: (hint.start - DAY_START) * zoom, height: (hint.end - hint.start) * zoom }}>{hint.none ? 'No room' : `${label(hint.start)} – ${label(hint.end)}`}</div>}
         {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 8, right: 10 }}>Prep · {b.forTitle}</div>)}
         {meetings.map((m) => { const mh = (m.end - m.start) * zoom; return (
@@ -1285,6 +1293,7 @@ function CommandPalette({ actions, onClose }) {
 
 function ShortcutsModal({ onClose }) {
   const rows = [
+    ['⌘K / Ctrl+K', 'Command palette'],
     ['T', 'Jump to today'],
     ['D / W / M', 'Day / Week / Month view'],
     ['← / →', 'Previous / next'],

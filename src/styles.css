@@ -586,6 +586,8 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .conn-chev { color: var(--faint); font-size: 15px; }
 .conn-card.open { box-shadow: var(--shadow-sm); }
 .drop-hint.invalid { border-color: var(--danger); background: rgba(220,38,38,.08); color: var(--danger); }
+.create-ghost { position: absolute; left: 8px; right: 10px; border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 8px; z-index: 4; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.create-ghost span { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--accent); opacity: .9; }
 
 /* connections v2 */
 .conn-section-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin: 4px 2px 8px; }
