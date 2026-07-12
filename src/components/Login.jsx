@@ -22,8 +22,8 @@ export default function Login({ onDone }) {
   return (
     <div className="center-screen">
       <form className="login-card" onSubmit={submit}>
-        <div className="login-title">Focus Planner</div>
-        <div className="login-sub">Enter your passphrase</div>
+        <div className="login-brand"><span className="dot" /> Focus Planner</div>
+        <div className="login-sub">Enter your passphrase to continue</div>
         <input
           className="underline-input"
           type="password"

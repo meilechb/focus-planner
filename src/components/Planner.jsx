@@ -179,6 +179,26 @@ export default function Planner() {
 
   useEffect(() => { const id = setInterval(() => setNow(nowMinutes(tz)), 30000); setNow(nowMinutes(tz)); return () => clearInterval(id) }, [tz])
 
+  // keyboard shortcuts: T=today, D/W/M=views, ←/→=navigate
+  useEffect(() => {
+    function onKey(e) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.target.closest && e.target.closest('input, textarea, .modal')) return
+      const k = e.key.toLowerCase()
+      const stepFor = () => (view === 'week' ? 7 : view === 'month' ? 30 : 1)
+      if (k === 't') setViewDate(today)
+      else if (k === 'd') setView('day')
+      else if (k === 'w') setView('week')
+      else if (k === 'm') setView('month')
+      else if (e.key === 'ArrowLeft') setViewDate((v) => addDays(v, -stepFor()))
+      else if (e.key === 'ArrowRight') setViewDate((v) => addDays(v, stepFor()))
+      else return
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [today, view])
+
   // Never lose an edit: flush any pending saves synchronously when the tab is
   // hidden or closed (debounced writes may not have fired yet).
   useEffect(() => {
@@ -424,12 +444,18 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, si
 /* ---- Day grid (full drag / resize / click-create) ---- */
 function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockName, onCommit, onEdit, onDelete, onCreateAt, onDropPayload }) {
   const ref = useRef(null)
+  const scrollRef = useRef(null)
   const drag = useRef(null)
   const latest = useRef(blocks)
   const [localBlocks, setLocalBlocks] = useState(blocks)
   const [hint, setHint] = useState(null)
   const [draggingId, setDraggingId] = useState(null)
   useEffect(() => { latest.current = blocks; setLocalBlocks(blocks) }, [blocks])
+  // scroll current time into view on first open of today
+  useEffect(() => {
+    if (scrollRef.current && day === today) scrollRef.current.scrollTop = Math.max(0, (now - DAY_START) * zoom - 150)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const buffers = useMemo(() => buffersFrom(meetings), [meetings])
   const height = (DAY_END - DAY_START) * zoom
   const hours = []; for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
@@ -474,7 +500,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
   const occAll = () => [...meetings, ...buffers, ...latest.current]
 
   return (
-    <div className="cal-scroll">
+    <div className="cal-scroll" ref={scrollRef}>
       <div className="grid" ref={ref} style={{ height }}
         onDoubleClick={(e) => { if (e.target === ref.current) { const s = fitDrop(occAll(), yToMin(e.clientY), 60); if (s) onCreateAt(s.start, s.end) } }}
         onDragOver={(e) => { e.preventDefault(); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(s || { start: yToMin(e.clientY), end: yToMin(e.clientY) + SNAP_MIN, none: true }) }}
@@ -512,7 +538,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
             </div>
           )
         })}
-        {day === today && now >= DAY_START && now <= DAY_END && <div className="now-line" style={{ top: (now - DAY_START) * zoom }}><span className="now-dot" /></div>}
+        {day === today && now >= DAY_START && now <= DAY_END && <div className="now-line" style={{ top: (now - DAY_START) * zoom }}><span className="now-chip">{label(now)}</span><span className="now-dot" /></div>}
       </div>
     </div>
   )
@@ -524,9 +550,14 @@ function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsF
   const height = (DAY_END - DAY_START) * zoom
   const hours = []; for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
   const colRefs = useRef({})
+  const scrollRef = useRef(null)
+  useEffect(() => {
+    if (scrollRef.current && days.includes(today)) scrollRef.current.scrollTop = Math.max(0, (now - DAY_START) * zoom - 150)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const yToMin = (day, clientY) => clamp(snap(DAY_START + (clientY - colRefs.current[day].getBoundingClientRect().top) / zoom), DAY_START, DAY_END - SNAP_MIN)
   return (
-    <div className="cal-scroll">
+    <div className="cal-scroll" ref={scrollRef}>
       <div className="week-colhead">
         <div />
         {days.map((d) => { const dd = new Date(d + 'T12:00:00'); return (
@@ -612,6 +643,7 @@ function Sidebar(props) {
   const taskEntry = (t, g, l) => ({ id: `t:${g.id}:${l.id}:${t.id}`, kind: 'task', label: t.title, color: g.id.startsWith('zoho') ? '#e42527' : '#2563eb', payload: { kind: 'task', task: { ...t, connId: g.id, listId: l.id } } })
   const zpEntry = (g, l) => ({ id: 'z:' + l.id, kind: 'zohoproject', label: l.title, color: '#e42527', payload: { kind: 'batch', title: l.title, tasks: l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) } })
   const favIcon = (k) => (k === 'project' ? 'folder' : k === 'zohoproject' ? 'list' : 'check')
+  const taskCount = groups.reduce((a, g) => a + g.lists.reduce((b, l) => b + l.tasks.length, 0), 0)
 
   return (
     <aside className="sidebar">
@@ -636,7 +668,7 @@ function Sidebar(props) {
 
         <div className="sb-block">
           <div className="sb-head clickable" onClick={() => toggleSec('projects')}>
-            <span><span className="sb-ic"><Icon name="folder" size={13} /></span> Projects</span><span className="caret"><Icon name={sections.projects ? 'chevronRight' : 'chevronDown'} size={16} /></span>
+            <span><span className="sb-ic"><Icon name="folder" size={13} /></span> Projects{projects.length > 0 && <span className="sec-count">{projects.length}</span>}</span><span className="caret"><Icon name={sections.projects ? 'chevronRight' : 'chevronDown'} size={16} /></span>
           </div>
           {!sections.projects && (
             <>
@@ -657,7 +689,7 @@ function Sidebar(props) {
         </div>
 
         <div className="sb-block">
-          <div className="sb-head"><span><span className="sb-ic"><Icon name="check" size={13} /></span> Tasks</span>
+          <div className="sb-head"><span><span className="sb-ic"><Icon name="check" size={13} /></span> Tasks{taskCount > 0 && <span className="sec-count">{taskCount}</span>}</span>
             <div className="seg">
               <button className={'seg-btn' + (taskFilter === 'all' ? ' on' : '')} onClick={() => setTaskFilter('all')}>All</button>
               <button className={'seg-btn' + (taskFilter === 'today' ? ' on' : '')} onClick={() => setTaskFilter('today')}>Today</button>
@@ -669,7 +701,7 @@ function Sidebar(props) {
           )}
           {groups.map((g) => (
             <div key={g.id} className="tgroup">
-              <div className="tgroup-head">{g.account}</div>
+              <div className="tgroup-head"><span className="acct-dot" style={{ background: g.id.startsWith('zoho') ? '#e42527' : '#2563eb' }} />{g.account}</div>
               {g.lists.map((l) => {
                 const key = g.id + '/' + l.id; const col = collapsed[key]
                 const isZP = g.id === 'zoho-projects'
@@ -844,7 +876,7 @@ function ProjectModal({ project, onSave, onClose, onDelete }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">{p.isNew ? 'New project' : 'Edit project'}</div>
+        <div className="modal-head"><div className="modal-title">{p.isNew ? 'New project' : 'Edit project'}</div><button className="icon-btn" onClick={onClose}><Icon name="x" size={18} /></button></div>
         <div><div className="field-label">Name</div><input className="field" autoFocus value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && save()} placeholder="e.g. Client work" /></div>
         <div><div className="field-label">Note (shows on the focus card)</div><input className="field" value={p.note || ''} onChange={(e) => setP({ ...p, note: e.target.value })} placeholder="Optional" /></div>
         <div><div className="field-label">Color</div><div className="swatches">{PALETTE.map((c) => <button key={c} className={'swatch-btn' + (p.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setP({ ...p, color: c })} />)}</div></div>
@@ -865,7 +897,7 @@ function BlockModal({ entry, projects, onSave, onDelete, onClose }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">Edit block</div>
+        <div className="modal-head"><div className="modal-title">Edit block</div><button className="icon-btn" onClick={onClose}><Icon name="x" size={18} /></button></div>
         {isProject
           ? <div><div className="field-label">Project</div><div className="field" style={{ background: 'var(--panel-2)' }}>{proj?.name || 'Project'}</div></div>
           : <div><div className="field-label">Title</div><input className="field" value={b.title || ''} onChange={(e) => setB({ ...b, title: e.target.value })} /></div>}

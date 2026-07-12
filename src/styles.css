@@ -97,6 +97,80 @@ input { font-family: inherit; }
 .density input[type=range] { -webkit-appearance: none; appearance: none; background: var(--line); border-radius: 999px; height: 4px; }
 .density input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--accent); cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.28); border: 2px solid #fff; }
 .density input[type=range]::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--accent); cursor: pointer; border: 2px solid #fff; }
+
+/* ============================================================
+   Polish pass 2
+   ============================================================ */
+:root { --t: .15s ease; }
+.btn, .icon-btn, .seg-btn, .field, .fav-card, .conn-card2, .proj-row, .titem, .tlist-head, .mcell, .conn-card { transition: background var(--t), border-color var(--t), box-shadow var(--t), color var(--t), transform .1s ease; }
+button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-weak); }
+.field:focus-visible { box-shadow: 0 0 0 3px var(--accent-weak); }
+
+/* brand + sidebar depth */
+.brand { border-bottom: 1px solid var(--line-2); }
+.brand .dot { background: linear-gradient(135deg, #5b9dff, #2563eb); box-shadow: 0 2px 8px rgba(37,99,235,.45); }
+.sidebar { border-right: none; box-shadow: inset -1px 0 0 var(--line); }
+
+/* buttons with a touch of depth */
+.btn.primary { background: linear-gradient(180deg, #2f6bf0, var(--accent)); border-color: var(--accent); box-shadow: 0 1px 2px rgba(37,99,235,.35); }
+.btn.primary:hover { background: linear-gradient(180deg, #2a63e6, var(--accent-ink)); }
+.nav-group .icon-btn { border-radius: 50%; }
+.seg-btn.on { box-shadow: 0 1px 2px rgba(16,24,40,.16); }
+
+/* account dot on task-group headers */
+.tgroup-head { display: flex; align-items: center; gap: 7px; text-transform: none; font-size: 12px; }
+.acct-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+/* nicer resize grips — small centered pill on hover */
+.ev-block:hover .ev-resize-top::after, .ev-block:hover .ev-resize::after { left: 50%; right: auto; transform: translateX(-50%); width: 24px; height: 3.5px; border-radius: 3px; background: rgba(255,255,255,.7); }
+
+/* current-time chip */
+.now-chip { position: absolute; left: -58px; transform: translateY(-50%); background: #ea4335; color: #fff; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 7px; z-index: 6; font-variant-numeric: tabular-nums; }
+
+/* week sticky header hairline */
+.week-colhead { box-shadow: 0 1px 0 var(--line); }
+
+/* month: weekend tint + tidy chips */
+.mcell:nth-child(7n), .mcell:nth-child(7n+1) { background: #fcfcfd; }
+.mcell.out:nth-child(7n), .mcell.out:nth-child(7n+1) { background: var(--panel-2); }
+.mchip { font-weight: 600; }
+
+/* modal entrance */
+.modal-backdrop { animation: fadeIn .14s ease; }
+.modal { animation: modalIn .17s cubic-bezier(.2,.7,.3,1); }
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes modalIn { from { opacity: 0; transform: translateY(8px) scale(.985) } to { opacity: 1; transform: none } }
+
+/* modal header row (project/block) */
+.modal-head { display: flex; align-items: center; justify-content: space-between; }
+
+/* swatches bigger + selected ring */
+.swatch-btn { width: 28px; height: 28px; }
+.swatch-btn.on { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--ink); border-color: transparent; }
+
+/* focus card subtle edge + check pop */
+.focus-card { border: 1px solid rgba(255,255,255,.14); }
+.focus-task .check, .focus-complete .check { transition: background .12s, transform .12s; }
+.focus-task.done .check, .focus-complete.done .check { transform: scale(1.05); }
+
+/* section count badges */
+.sec-count { font-size: 10.5px; font-weight: 700; color: var(--muted); background: var(--line-2); border-radius: 20px; padding: 1px 7px; margin-left: 7px; }
+
+/* thinner, softer scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #d3d7de; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+* { scrollbar-width: thin; scrollbar-color: #d3d7de transparent; }
+
+/* placeholder tone */
+.field::placeholder, .underline-input::placeholder { color: var(--faint); }
+
+/* login brand lockup */
+.login-brand { display: flex; align-items: center; gap: 9px; font-size: 20px; font-weight: 700; }
+.login-brand .dot { width: 22px; height: 22px; border-radius: 7px; background: linear-gradient(135deg, #5b9dff, #2563eb); box-shadow: 0 2px 8px rgba(37,99,235,.45); }
+
+/* smooth number transitions on the density value */
+.today-date { user-select: none; }
+.sb-head { user-select: none; }
 .density input[type=range] { width: 108px; accent-color: var(--accent); height: 4px; cursor: pointer; }
 .conn-btn { width: 100%; justify-content: center; }
 .conn-btn .gear { font-size: 14px; }
