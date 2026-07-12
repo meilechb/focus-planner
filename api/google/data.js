@@ -34,12 +34,19 @@ export default async function handler(req, res) {
     const { action } = body
 
     const googleConns = (await listConnections()).filter((c) => c.provider === 'google')
+    // Legacy connections (no features field) had both.
+    const hasFeature = (c, f) => !c.extra?.features || c.extra.features.includes(f)
 
     if (action === 'calendars') {
       const accounts = []
       for (const c of googleConns) {
-        const { accessToken } = await tokenFor(c.id)
-        accounts.push({ connId: c.id, email: c.account_email, calendars: await listCalendars(accessToken) })
+        if (!hasFeature(c, 'calendar')) continue
+        try {
+          const { accessToken } = await tokenFor(c.id)
+          accounts.push({ connId: c.id, email: c.account_email, calendars: await listCalendars(accessToken) })
+        } catch (e) {
+          accounts.push({ connId: c.id, email: c.account_email, calendars: [], error: String(e.message || e) })
+        }
       }
       return res.status(200).json({ accounts })
     }
@@ -47,8 +54,13 @@ export default async function handler(req, res) {
     if (action === 'taskLists') {
       const accounts = []
       for (const c of googleConns) {
-        const { accessToken } = await tokenFor(c.id)
-        accounts.push({ connId: c.id, email: c.account_email, lists: await listTaskLists(accessToken) })
+        if (!hasFeature(c, 'tasks')) continue
+        try {
+          const { accessToken } = await tokenFor(c.id)
+          accounts.push({ connId: c.id, email: c.account_email, lists: await listTaskLists(accessToken) })
+        } catch (e) {
+          accounts.push({ connId: c.id, email: c.account_email, lists: [], error: String(e.message || e) })
+        }
       }
       return res.status(200).json({ accounts })
     }

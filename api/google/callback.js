@@ -2,7 +2,7 @@
 // token, and redirects back to the app.
 import { saveConnection } from '../_lib/store.js'
 import { verifyState } from '../_lib/state.js'
-import { exchangeCode, getUserEmail } from '../_lib/google.js'
+import { exchangeCode, getUserEmail, featuresFor } from '../_lib/google.js'
 
 function baseUrl(req) {
   const proto = req.headers['x-forwarded-proto'] || 'https'
@@ -16,7 +16,9 @@ export default async function handler(req, res) {
   }
   try {
     const { code, state } = req.query || {}
-    if (!code || !verifyState(state)) return done('err')
+    const st = verifyState(state)
+    if (!code || !st) return done('err')
+    const mode = st.mode === 'tasks' ? 'tasks' : 'all'
 
     const clientId = process.env.GOOGLE_CLIENT_ID
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET
@@ -38,7 +40,7 @@ export default async function handler(req, res) {
       account_email: email,
       account_label: email || 'Google',
       refresh_token: tokens.refresh_token,
-      extra: {},
+      extra: { features: featuresFor(mode) },
     })
     return done('ok')
   } catch (e) {

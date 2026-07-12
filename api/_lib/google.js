@@ -9,22 +9,31 @@ const USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
 const CAL_BASE = 'https://www.googleapis.com/calendar/v3'
 const TASKS_BASE = 'https://tasks.googleapis.com/tasks/v1'
 
-export const GOOGLE_SCOPES = [
-  'https://www.googleapis.com/auth/calendar.readonly',
-  'https://www.googleapis.com/auth/tasks',
-  'openid',
-  'email',
-  'profile',
-]
+const BASE_SCOPES = ['openid', 'email', 'profile']
+const CAL_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
+const TASKS_SCOPE = 'https://www.googleapis.com/auth/tasks'
 
-export function buildAuthUrl({ clientId, redirectUri, state }) {
+// mode: 'all' = calendar + tasks, 'tasks' = tasks only (e.g. a personal account).
+export function scopesFor(mode) {
+  const s = [...BASE_SCOPES, TASKS_SCOPE]
+  if (mode !== 'tasks') s.unshift(CAL_SCOPE)
+  return s
+}
+
+export function featuresFor(mode) {
+  return mode === 'tasks' ? ['tasks'] : ['calendar', 'tasks']
+}
+
+export function buildAuthUrl({ clientId, redirectUri, state, mode = 'all' }) {
   const p = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: GOOGLE_SCOPES.join(' '),
+    scope: scopesFor(mode).join(' '),
     access_type: 'offline',
-    prompt: 'consent',
+    // select_account lets you pick/add a different account each time (multi-account);
+    // consent guarantees a refresh token.
+    prompt: 'select_account consent',
     include_granted_scopes: 'true',
     state,
   })

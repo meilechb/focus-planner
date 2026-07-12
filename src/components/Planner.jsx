@@ -26,6 +26,7 @@ export default function Planner() {
   const [selectedTaskLists, setSelectedTaskLists] = useState([]) // ["connId::listId"]
   const [events, setEvents] = useState([]) // for viewDate
   const [gtasks, setGtasks] = useState([]) // flat [{...,connId,listId}]
+  const [zoho, setZoho] = useState({ crm: { deals: [], leads: [] }, projects: [], errors: [] })
 
   const [viewDate, setViewDate] = useState(() => isoDate(new Date(), DEFAULT_TZ))
   const [view, setView] = useState('day')
@@ -41,6 +42,7 @@ export default function Planner() {
 
   const today = isoDate(new Date(), tz)
   const connected = connections.some((c) => c.provider === 'google')
+  const hasZoho = connections.some((c) => c.provider === 'zoho')
 
   // --- boot -----------------------------------------------------------------
   useEffect(() => {
@@ -67,6 +69,9 @@ export default function Planner() {
 
       if (conns.some((c) => c.provider === 'google')) {
         await loadGoogleMeta(state)
+      }
+      if (conns.some((c) => c.provider === 'zoho')) {
+        loadZoho()
       }
 
       const p = new URLSearchParams(location.search)
@@ -104,6 +109,21 @@ export default function Planner() {
     } catch (e) {
       console.error('google meta load failed', e)
     }
+  }
+
+  async function loadZoho() {
+    try {
+      const r = await api.post('/api/zoho/data', { action: 'fetch' })
+      setZoho(r)
+    } catch (e) {
+      console.error('zoho load failed', e)
+    }
+  }
+
+  async function disconnect(id) {
+    await api.del('/api/connections?id=' + id).catch(() => {})
+    const r = await api.get('/api/connections').catch(() => ({ connections: [] }))
+    setConnections(r.connections || [])
   }
 
   // --- fetch events when day / calendar selection changes -------------------
@@ -212,24 +232,52 @@ export default function Planner() {
   // --- task groups (real when connected, else demo) -------------------------
   const displayGroups = useMemo(() => {
     const passesFilter = (t) => taskFilter === 'all' || (t.due && localDateISO(t.due, tz) === viewDate)
-    if (!connected) {
-      return MOCK_TASK_GROUPS.map((g) => ({
-        ...g,
-        lists: g.lists.map((l) => ({ ...l, tasks: l.tasks.filter(passesFilter) })),
-      }))
+    const groups = []
+
+    if (!connected && !hasZoho) {
+      for (const g of MOCK_TASK_GROUPS) {
+        groups.push({ ...g, lists: g.lists.map((l) => ({ ...l, tasks: l.tasks.filter(passesFilter) })) })
+      }
     }
-    return taskAccounts.map((a) => ({
-      id: a.connId,
-      account: a.email || 'Google',
-      lists: a.lists.map((l) => ({
-        id: l.id,
-        title: l.title,
-        tasks: gtasks
-          .filter((t) => t.connId === a.connId && t.listId === l.id)
-          .filter(passesFilter),
-      })),
-    }))
-  }, [connected, taskAccounts, gtasks, taskFilter, tz, viewDate])
+
+    if (connected) {
+      for (const a of taskAccounts) {
+        groups.push({
+          id: a.connId,
+          account: a.email || 'Google',
+          lists: a.lists.map((l) => ({
+            id: l.id,
+            title: l.title,
+            tasks: gtasks
+              .filter((t) => t.connId === a.connId && t.listId === l.id)
+              .filter(passesFilter)
+              .map((t) => ({ ...t, source: 'google' })),
+          })),
+        })
+      }
+    }
+
+    // Zoho (no due dates -> not affected by the Today filter)
+    if (hasZoho) {
+      const crmLists = []
+      if (zoho.crm.deals.length) {
+        crmLists.push({ id: 'deals', title: 'Deals', tasks: zoho.crm.deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })) })
+      }
+      if (zoho.crm.leads.length) {
+        crmLists.push({ id: 'leads', title: 'Leads', tasks: zoho.crm.leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })) })
+      }
+      if (crmLists.length) groups.push({ id: 'zoho-crm', account: 'Zoho CRM', lists: crmLists })
+      if (zoho.projects.length) {
+        groups.push({
+          id: 'zoho-projects',
+          account: 'Zoho Projects',
+          lists: zoho.projects.map((p) => ({ id: p.id, title: p.name, tasks: p.tasks.map((t) => ({ ...t, source: 'zoho' })) })),
+        })
+      }
+    }
+
+    return groups
+  }, [connected, hasZoho, taskAccounts, gtasks, zoho, taskFilter, tz, viewDate])
 
   // --- focus ----------------------------------------------------------------
   const focus = useMemo(() => {
@@ -249,7 +297,8 @@ export default function Planner() {
     if (next) setOverrideBlockId(next.id) // does NOT touch the current block's tasks
   }
 
-  function applyTaskCompletion(connId, listId, taskId, completed) {
+  function applyTaskCompletion(task, completed) {
+    const { connId, listId, id: taskId, source } = task
     const status = completed ? 'completed' : 'needsAction'
     // 1: blocks
     const next = { ...blocks }
@@ -261,10 +310,11 @@ export default function Planner() {
       )
     }
     updateBlocks(next)
-    // 2: sidebar list
-    setGtasks((cur) => (completed ? cur.filter((t) => t.id !== taskId) : cur.map((t) => (t.id === taskId ? { ...t, status } : t))))
-    // 3: write-back to Google
-    api.post('/api/google/data', { action: 'complete', connId, listId, taskId, completed }).catch(() => {})
+    // 2 + 3: only Google is read/write. Zoho is read-only — tick it locally only.
+    if (source === 'google') {
+      setGtasks((cur) => (completed ? cur.filter((t) => t.id !== taskId) : cur.map((t) => (t.id === taskId ? { ...t, status } : t))))
+      api.post('/api/google/data', { action: 'complete', connId, listId, taskId, completed }).catch(() => {})
+    }
   }
 
   // --- drop from sidebar ----------------------------------------------------
@@ -350,7 +400,7 @@ export default function Planner() {
         connected={connected} groups={displayGroups}
         taskFilter={taskFilter} setTaskFilter={setTaskFilter}
         collapsed={collapsed} setCollapsed={setCollapsed}
-        connections={connections}
+        connections={connections} onDisconnect={disconnect}
         calAccounts={calAccounts} selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
         showCalPicker={showCalPicker} setShowCalPicker={setShowCalPicker}
         remState={remState} onEnableReminders={enableReminders}
@@ -420,7 +470,7 @@ export default function Planner() {
 
       {!focusHidden && (
         <FocusCard focus={focus} now={now}
-          onToggleTask={(t) => applyTaskCompletion(t.connId, t.listId, t.id, t.status !== 'completed')}
+          onToggleTask={(t) => applyTaskCompletion(t, t.status !== 'completed')}
           onNext={advanceToNext} onHide={() => setFocusHidden(true)} />
       )}
       {focusHidden && <button className="focus-show" onClick={() => setFocusHidden(false)}>Show focus</button>}
@@ -454,7 +504,7 @@ function Sidebar(props) {
   const {
     projects, onAddProject, onEditProject, onDeleteProject,
     connected, groups, taskFilter, setTaskFilter, collapsed, setCollapsed,
-    connections, calAccounts, selectedCalendars, toggleCalendar, showCalPicker, setShowCalPicker,
+    connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar, showCalPicker, setShowCalPicker,
     remState, onEnableReminders,
   } = props
   const [newName, setNewName] = useState('')
@@ -526,7 +576,13 @@ function Sidebar(props) {
         <div className="sec-head">Connections</div>
         {connections.length === 0 && <div className="muted">No accounts connected.</div>}
         {connections.map((c) => (
-          <div key={c.id} className="conn-row">{c.account_label || c.provider}</div>
+          <div key={c.id} className="conn-row">
+            <span className="conn-name">
+              {c.account_label || c.provider}
+              {c.provider === 'google' && c.extra?.features && !c.extra.features.includes('calendar') ? ' · tasks' : ''}
+            </span>
+            <button className="row-x" title="Disconnect" onClick={() => onDisconnect(c.id)}>×</button>
+          </div>
         ))}
         {connected && calAccounts.length > 0 && (
           <>
@@ -550,8 +606,9 @@ function Sidebar(props) {
             ))}
           </>
         )}
-        <a className="btn-connect" href="/api/google/start">Connect Google</a>
-        <a className="btn-connect" href="/api/zoho/start">Connect Zoho</a>
+        <a className="btn-connect" href="/api/google/start">+ Google (calendar + tasks)</a>
+        <a className="btn-connect" href="/api/google/start?mode=tasks">+ Google (tasks only)</a>
+        <a className="btn-connect" href="/api/zoho/start">+ Connect Zoho</a>
       </section>
 
       <section>
