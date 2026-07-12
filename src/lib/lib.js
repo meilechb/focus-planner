@@ -33,11 +33,10 @@ export function addDays(iso, n) {
   return d.toISOString().slice(0, 10)
 }
 
-// Monday-based start of week for an ISO date.
+// Sunday-based start of week for an ISO date.
 export function startOfWeek(iso) {
   const d = parseISO(iso)
-  const day = (d.getUTCDay() + 6) % 7 // 0 = Monday
-  return addDays(iso, -day)
+  return addDays(iso, -d.getUTCDay()) // 0 = Sunday
 }
 
 export function sameDay(a, b) {

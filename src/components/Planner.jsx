@@ -163,6 +163,23 @@ export default function Planner() {
 
   useEffect(() => { const id = setInterval(() => setNow(nowMinutes(tz)), 30000); setNow(nowMinutes(tz)); return () => clearInterval(id) }, [tz])
 
+  // Never lose an edit: flush any pending saves synchronously when the tab is
+  // hidden or closed (debounced writes may not have fired yet).
+  useEffect(() => {
+    const flushBeacon = () => {
+      if (!pending.current.size) return
+      for (const [key, value] of pending.current.entries()) {
+        try { navigator.sendBeacon('/api/data', new Blob([JSON.stringify({ key, value })], { type: 'application/json' })) } catch {}
+      }
+      pending.current.clear()
+    }
+    const onVis = () => { if (document.visibilityState === 'hidden') flushBeacon() }
+    window.addEventListener('pagehide', flushBeacon)
+    window.addEventListener('beforeunload', flushBeacon)
+    document.addEventListener('visibilitychange', onVis)
+    return () => { window.removeEventListener('pagehide', flushBeacon); window.removeEventListener('beforeunload', flushBeacon); document.removeEventListener('visibilitychange', onVis) }
+  }, [])
+
   // --- persistence ----------------------------------------------------------
   const pending = useRef(new Map()); const timer = useRef(null); const flushing = useRef(false)
   function saveKey(key, value) { if (!storageOk) return; pending.current.set(key, value); clearTimeout(timer.current); timer.current = setTimeout(flush, 400) }
@@ -185,8 +202,12 @@ export default function Planner() {
   function updateBlock(d, b) { updateBlocks({ ...blocks, [d]: (blocks[d] || []).map((x) => (x.id === b.id ? b : x)) }) }
   function deleteBlock(d, id) { updateBlocks({ ...blocks, [d]: (blocks[d] || []).filter((x) => x.id !== id) }) }
 
-  function addProject(name) { updateProjects([...projects, { id: uuid(), name, color: PALETTE[projects.length % PALETTE.length], note: '' }]) }
-  function saveProject(p) { updateProjects(projects.map((x) => (x.id === p.id ? p : x))); setEditProject(null) }
+  function newProject() { setEditProject({ id: uuid(), name: '', color: PALETTE[projects.length % PALETTE.length], note: '', isNew: true }) }
+  function saveProject(p) {
+    const clean = { ...p }; delete clean.isNew
+    updateProjects(projects.some((x) => x.id === p.id) ? projects.map((x) => (x.id === p.id ? clean : x)) : [...projects, clean])
+    setEditProject(null)
+  }
   function deleteProject(id) { updateProjects(projects.filter((x) => x.id !== id)) }
 
   function toggleCalendar(k) { const n = selectedCalendars.includes(k) ? selectedCalendars.filter((x) => x !== k) : [...selectedCalendars, k]; setSelectedCalendars(n); saveKey('selectedCalendars', n) }
@@ -269,7 +290,7 @@ export default function Planner() {
   return (
     <div className={'app' + (sidebarOpen ? '' : ' sidebar-collapsed')}>
       <Sidebar
-        projects={projects} onAddProject={addProject} onEditProject={setEditProject} onDeleteProject={deleteProject}
+        projects={projects} onNewProject={newProject} onEditProject={setEditProject} onDeleteProject={deleteProject}
         connected={connected} hasZoho={hasZoho} groups={displayGroups}
         taskFilter={taskFilter} setTaskFilter={setTaskFilter} taskSearch={taskSearch} setTaskSearch={setTaskSearch}
         collapsed={collapsed} setCollapsed={setCollapsed} sections={sections} setSections={setSections}
@@ -380,6 +401,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
   const drag = useRef(null)
   const latest = useRef(blocks)
   const [localBlocks, setLocalBlocks] = useState(blocks)
+  const [hint, setHint] = useState(null)
   useEffect(() => { latest.current = blocks; setLocalBlocks(blocks) }, [blocks])
   const buffers = useMemo(() => buffersFrom(meetings), [meetings])
   const height = (DAY_END - DAY_START) * zoom
@@ -398,6 +420,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
     const list = latest.current.map((b) => {
       if (b.id !== dd.id) return b
       if (dd.mode === 'move') { const len = dd.orig.end - dd.orig.start; const start = clamp(dd.orig.start + dMin, DAY_START, DAY_END - len); return { ...b, start, end: start + len } }
+      if (dd.mode === 'resize-top') { const start = clamp(dd.orig.start + dMin, DAY_START, dd.orig.end - SNAP_MIN); return { ...b, start } }
       return { ...b, end: clamp(dd.orig.end + dMin, dd.orig.start + SNAP_MIN, DAY_END) }
     })
     latest.current = list; setLocalBlocks(list)
@@ -413,19 +436,22 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
     <div className="cal-scroll">
       <div className="grid" ref={ref} style={{ height }}
         onClick={(e) => { if (e.target === ref.current) onCreateAt(yToMin(e.clientY)) }}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => { e.preventDefault(); try { onDropPayload(JSON.parse(e.dataTransfer.getData('application/json')), yToMin(e.clientY)) } catch {} }}>
+        onDragOver={(e) => { e.preventDefault(); setHint(yToMin(e.clientY)) }}
+        onDragLeave={(e) => { if (e.target === ref.current) setHint(null) }}
+        onDrop={(e) => { e.preventDefault(); setHint(null); try { onDropPayload(JSON.parse(e.dataTransfer.getData('application/json')), yToMin(e.clientY)) } catch {} }}>
         {hours.map((h) => (
           <React.Fragment key={h}>
             <div className="hour-row" style={{ top: (h - DAY_START) * zoom }}><span className="hour-label">{labelShort(h)}</span></div>
             {h < DAY_END && <div className="hour-row half" style={{ top: (h + 30 - DAY_START) * zoom }} />}
           </React.Fragment>
         ))}
+        {hint != null && <div className="drop-hint" style={{ top: (hint - DAY_START) * zoom, height: 30 * zoom }}>{label(hint)}</div>}
         {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 0, right: 0 }}>Prep · {b.forTitle}</div>)}
         {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 0, right: 0 }}><div className="ev-title">{m.title}</div><div className="ev-time">{label(m.start)} – {label(m.end)}</div></div>)}
         {localBlocks.map((b) => (
           <div key={b.id} className="ev ev-block" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 0, right: 0, background: blockColor(b) }}
             onPointerDown={(e) => onPointerDown(e, b, 'move')}>
+            <div className="ev-resize-top" onPointerDown={(e) => onPointerDown(e, b, 'resize-top')} />
             <button className="ev-del" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete(b.id) }}>×</button>
             <div className="ev-title">{blockName(b)}</div>
             <div className="ev-time">{label(b.start)} – {label(b.end)}</div>
@@ -512,11 +538,10 @@ function MonthGrid({ viewDate, today, blocksByDay, meetingsFor, blockColor, bloc
 /* ---- Sidebar ---- */
 function Sidebar(props) {
   const {
-    projects, onAddProject, onEditProject, onDeleteProject, connected, hasZoho, groups,
+    projects, onNewProject, onEditProject, onDeleteProject, connected, hasZoho, groups,
     taskFilter, setTaskFilter, taskSearch, setTaskSearch, collapsed, setCollapsed, sections, setSections,
     connections, onOpenConnections, remState, onEnableReminders,
   } = props
-  const [newName, setNewName] = useState('')
   const dragProject = (e, id) => e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'project', projectId: id }))
   const dragTask = (e, task, g, l) => e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', task: { ...task, connId: g.id, listId: l.id } }))
   const dragBatch = (e, g, l) => e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: l.title, tasks: l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) }))
@@ -541,12 +566,9 @@ function Sidebar(props) {
                   <button className="row-x" onClick={() => onDeleteProject(p.id)}>×</button>
                 </div>
               ))}
-              {projects.length === 0 && <div className="muted" style={{ padding: '2px 8px' }}>Add a project, then drag it onto the grid.</div>}
+              {projects.length === 0 && <div className="muted" style={{ padding: '2px 8px' }}>No projects yet — drag one onto the grid to block time.</div>}
             </div>
-            <form className="add-proj" onSubmit={(e) => { e.preventDefault(); if (newName.trim()) { onAddProject(newName.trim()); setNewName('') } }}>
-              <input className="field" placeholder="New project…" value={newName} onChange={(e) => setNewName(e.target.value)} />
-              <button className="btn primary sm" type="submit">Add</button>
-            </form>
+            <button className="btn new-proj" onClick={onNewProject}>＋ New project</button>
           </>
         )}
       </div>
@@ -606,6 +628,7 @@ function ProviderGlyph({ provider }) {
 
 function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar, onClose }) {
   const [feats, setFeats] = useState({ calendar: true, tasks: true })
+  const [open, setOpen] = useState(null)
   const googleHref = `/api/google/start?feats=${[feats.calendar && 'calendar', feats.tasks && 'tasks'].filter(Boolean).join(',') || 'tasks'}`
   const calsFor = (connId) => calAccounts.find((a) => a.connId === connId)?.calendars || []
 
@@ -621,25 +644,29 @@ function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCale
           {connections.length === 0 && <div className="muted" style={{ padding: '4px 2px 12px' }}>No accounts connected yet. Add one below.</div>}
 
           {connections.map((c) => {
-            const feats = c.extra?.features || ['calendar', 'tasks']
-            const cals = c.provider === 'google' && feats.includes('calendar') ? calsFor(c.id) : []
+            const cfeats = c.extra?.features || ['calendar', 'tasks']
+            const cals = c.provider === 'google' && cfeats.includes('calendar') ? calsFor(c.id) : []
+            const expandable = cals.length > 0
+            const isOpen = open === c.id
             return (
-              <div key={c.id} className="conn-card">
-                <div className="conn-card-head">
+              <div key={c.id} className={'conn-card' + (isOpen ? ' open' : '')}>
+                <div className={'conn-card-head' + (expandable ? ' clickable' : '')} onClick={() => expandable && setOpen(isOpen ? null : c.id)}>
                   <ProviderGlyph provider={c.provider} />
                   <div className="conn-card-id">
                     <div className="conn-card-email">{c.account_label || c.provider}</div>
                     <div className="conn-card-badges">
                       {c.provider === 'google'
-                        ? feats.map((f) => <span key={f} className="conn-badge">{f}</span>)
+                        ? cfeats.map((f) => <span key={f} className="conn-badge">{f}</span>)
                         : <span className="conn-badge">deals · leads · projects</span>}
+                      {expandable && <span className="conn-badge">{cals.length} calendars</span>}
                     </div>
                   </div>
-                  <button className="link danger" onClick={() => onDisconnect(c.id)}>Disconnect</button>
+                  {expandable && <span className="conn-chev">{isOpen ? '▴' : '▾'}</span>}
+                  <button className="link danger" onClick={(e) => { e.stopPropagation(); onDisconnect(c.id) }}>Disconnect</button>
                 </div>
-                {cals.length > 0 && (
+                {expandable && isOpen && (
                   <div className="conn-cals">
-                    <div className="field-label">Calendars shown</div>
+                    <div className="field-label">Calendars shown on the grid</div>
                     {cals.map((cal) => { const key = `${c.id}::${cal.id}`; return (
                       <label key={cal.id} className="cal-row">
                         <input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} />
@@ -675,14 +702,19 @@ function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCale
 
 function ProjectModal({ project, onSave, onClose, onDelete }) {
   const [p, setP] = useState({ ...project })
+  const save = () => { if (p.name.trim()) onSave({ ...p, name: p.name.trim() }) }
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">Edit project</div>
-        <div><div className="field-label">Name</div><input className="field" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} /></div>
-        <div><div className="field-label">Note (shows on the focus card)</div><input className="field" value={p.note || ''} onChange={(e) => setP({ ...p, note: e.target.value })} /></div>
+        <div className="modal-title">{p.isNew ? 'New project' : 'Edit project'}</div>
+        <div><div className="field-label">Name</div><input className="field" autoFocus value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && save()} placeholder="e.g. Client work" /></div>
+        <div><div className="field-label">Note (shows on the focus card)</div><input className="field" value={p.note || ''} onChange={(e) => setP({ ...p, note: e.target.value })} placeholder="Optional" /></div>
         <div><div className="field-label">Color</div><div className="swatches">{PALETTE.map((c) => <button key={c} className={'swatch-btn' + (p.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setP({ ...p, color: c })} />)}</div></div>
-        <div className="modal-actions"><button className="link danger" onClick={() => { onDelete(p.id); onClose() }}>Delete</button><div className="spacer" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(p)}>Save</button></div>
+        <div className="modal-actions">
+          {!p.isNew && <button className="link danger" onClick={() => { onDelete(p.id); onClose() }}>Delete</button>}
+          <div className="spacer" /><button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={save} disabled={!p.name.trim()}>{p.isNew ? 'Create' : 'Save'}</button>
+        </div>
       </div>
     </div>
   )

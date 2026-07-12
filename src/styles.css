@@ -278,3 +278,21 @@ input { font-family: inherit; }
 
 .week-col:hover { background: rgba(37,99,235,.04); }
 .week-col.is-today:hover { background: rgba(37,99,235,.06); }
+
+.new-proj { width: 100%; justify-content: center; margin-top: 8px; }
+
+/* drop target highlight */
+.drop-hint { position: absolute; left: 0; right: 0; border: 2px dashed var(--accent); background: var(--accent-weak); border-radius: 7px; z-index: 7; display: flex; align-items: flex-start; padding: 2px 8px; font-size: 11px; color: var(--accent-ink); font-weight: 700; pointer-events: none; }
+
+/* resize handles with visible grips on hover */
+.ev-resize-top { position: absolute; left: 0; right: 0; top: 0; height: 9px; cursor: ns-resize; z-index: 2; }
+.ev-block { cursor: grab; }
+.ev-block:hover .ev-resize-top::after, .ev-block:hover .ev-resize::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); width: 26px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.75); }
+.ev-block:hover .ev-resize-top::after { top: 2px; }
+.ev-block:hover .ev-resize::after { bottom: 2px; }
+.ev-resize { z-index: 2; }
+
+/* connections card expand */
+.conn-card-head.clickable { cursor: pointer; }
+.conn-chev { color: var(--faint); font-size: 12px; }
+.conn-card.open { box-shadow: var(--shadow-sm); }
