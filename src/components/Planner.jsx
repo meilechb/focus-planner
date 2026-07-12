@@ -24,7 +24,14 @@ const SEEN_KEY = 'focus_seen_accounts'
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
 function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
 const NAVCFG_KEY = 'focus_navcfg'
-const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, zohoAssignee: 'mine', filters: { deals: [], leads: [], projects: [] } }
+const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, zohoAssignee: 'mine', filters: { deals: [], leads: [], projects: [] }, colors: {} }
+// One source of truth for connector colors. A block dropped from a source, the
+// sidebar section, and the focus card ALL use this — so a Google task is the
+// same color everywhere. Users can override per source in Settings.
+const DEFAULT_COLORS = { google: '#2563eb', 'zoho-crm': '#e42527', 'zoho-projects': '#e8590c' }
+const COLOR_CHOICES = ['#2563eb', '#0f9d58', '#e8590c', '#e42527', '#8e24aa', '#0891b2', '#d97706', '#616161']
+function srcKey(gid) { return gid === 'zoho-crm' ? 'zoho-crm' : gid === 'zoho-projects' ? 'zoho-projects' : 'google' }
+function srcColor(navCfg, gid) { const k = srcKey(gid); return (navCfg?.colors && navCfg.colors[k]) || DEFAULT_COLORS[k] }
 function readNavCfg() { try { return { ...DEFAULT_NAVCFG, ...JSON.parse(localStorage.getItem(NAVCFG_KEY) || '{}') } } catch { return { ...DEFAULT_NAVCFG } } }
 const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 const timeToMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m }
@@ -407,8 +414,8 @@ export default function Planner() {
       const leads = zoho.crm?.leads || []
       const zprojects = zoho.projects || []
       const crmLists = []
-      if (deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, source: 'zoho' })).filter(searchOk) })
-      if (leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, source: 'zoho' })).filter(searchOk) })
+      if (deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, url: d.url, source: 'zoho' })).filter(searchOk) })
+      if (leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, url: d.url, source: 'zoho' })).filter(searchOk) })
       if (crmLists.length) groups.push({ id: 'zoho-crm', account: 'Zoho CRM', lists: crmLists, dealFields: zoho.crm?.dealFields || [], leadFields: zoho.crm?.leadFields || [] })
       if (zprojects.length) {
         // Derive filterable project fields (Status, Priority, Owner, Task List)
@@ -454,8 +461,8 @@ export default function Planner() {
   // --- create a block from a drop payload (start/end already collision-fit) --
   function blockFromPayload(payload, start, end) {
     if (payload.kind === 'project') return { id: uuid(), start, end, projectId: payload.projectId }
-    if (payload.kind === 'task') return { id: uuid(), start, end, tasks: [payload.task] }
-    if (payload.kind === 'batch') return { id: uuid(), start, end, title: payload.title, color: '#2563eb', tasks: payload.tasks }
+    if (payload.kind === 'task') return { id: uuid(), start, end, color: payload.color, tasks: [payload.task] }
+    if (payload.kind === 'batch') return { id: uuid(), start, end, title: payload.title, color: payload.color || '#2563eb', tasks: payload.tasks }
     return null
   }
 
@@ -865,22 +872,22 @@ function Sidebar(props) {
     setTimeout(() => el.remove(), 0)
   }
   const dragProject = (e, p) => { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'project', projectId: p.id })); chip(e, p.name, p.color) }
-  const dragTask = (e, task, g, l) => { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', task: { ...task, connId: g.id, listId: l.id } })); chip(e, task.title, g.id.startsWith('zoho') ? '#e42527' : '#2563eb') }
-  const dragBatch = (e, g, l, only) => { const tasks = (only || l.tasks).filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })); e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: l.title, tasks })); chip(e, `${l.title} · ${tasks.length}`, g.id.startsWith('zoho') ? '#e42527' : '#2563eb') }
+  const dragTask = (e, task, g, l) => { const color = srcColor(navCfg, g.id); e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', color, task: { ...task, connId: g.id, listId: l.id } })); chip(e, task.title, color) }
+  const dragBatch = (e, g, l, only) => { const color = srcColor(navCfg, g.id); const tasks = (only || l.tasks).filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })); e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', color, title: l.title, tasks })); chip(e, `${l.title} · ${tasks.length}`, color) }
   const dragFav = (e, f) => { e.dataTransfer.setData('application/json', JSON.stringify(f.payload)); chip(e, f.label, f.color) }
 
   const projEntry = (p) => ({ id: 'p:' + p.id, kind: 'project', label: p.name, color: p.color, projectId: p.id, payload: { kind: 'project', projectId: p.id } })
-  const taskEntry = (t, g, l) => ({ id: `t:${g.id}:${l.id}:${t.id}`, kind: 'task', label: t.title, color: g.id.startsWith('zoho') ? '#e42527' : '#2563eb', payload: { kind: 'task', task: { ...t, connId: g.id, listId: l.id } } })
+  const taskEntry = (t, g, l) => { const color = srcColor(navCfg, g.id); return { id: `t:${g.id}:${l.id}:${t.id}`, kind: 'task', label: t.title, color, payload: { kind: 'task', color, task: { ...t, connId: g.id, listId: l.id } } } }
   // Favorite an entire list (Deals, Leads, a project, a Google list) as a batch
   // block — this is how you "drag CRM as a block", not just individual records.
   const listFavId = (g, l) => `zb:${g.id}:${l.id}`
-  const batchEntry = (g, l, tasks) => ({
+  const batchEntry = (g, l, tasks) => { const color = srcColor(navCfg, g.id); return {
     id: listFavId(g, l),
     kind: g.id === 'zoho-crm' ? 'crm' : g.id === 'zoho-projects' ? 'zohoproject' : 'tasklist',
     label: l.title,
-    color: g.id.startsWith('zoho') ? '#e42527' : '#2563eb',
-    payload: { kind: 'batch', title: l.title, tasks: (tasks || l.tasks).filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) },
-  })
+    color,
+    payload: { kind: 'batch', color, title: l.title, tasks: (tasks || l.tasks).filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) },
+  } }
   const favIcon = (k) => (k === 'project' ? 'folder' : k === 'zohoproject' || k === 'crm' || k === 'tasklist' ? 'list' : 'check')
 
   // --- apply the saved "Customize nav bar" settings ------------------------
@@ -913,9 +920,10 @@ function Sidebar(props) {
 
   // Meta (color / icon / settings tab / title) for a connected-source section.
   const groupMeta = (g) => {
-    if (g.id === 'zoho-crm') return { color: '#e42527', icon: 'list', title: 'Zoho CRM', tab: 'crm' }
-    if (g.id === 'zoho-projects') return { color: '#e8590c', icon: 'folder', title: 'Zoho Projects', tab: 'projects' }
-    return { color: '#2563eb', icon: 'check', title: 'Google Tasks', tab: 'gtasks' }
+    const color = srcColor(navCfg, g.id)
+    if (g.id === 'zoho-crm') return { color, icon: 'list', title: 'Zoho CRM', tab: 'crm' }
+    if (g.id === 'zoho-projects') return { color, icon: 'folder', title: 'Zoho Projects', tab: 'projects' }
+    return { color, icon: 'check', title: 'Google Tasks', tab: 'gtasks' }
   }
   const calAcc = (calAccounts || []).filter((a) => (a.calendars || []).length)
   const hasCal = calAcc.length > 0

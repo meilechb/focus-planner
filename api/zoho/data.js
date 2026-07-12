@@ -65,7 +65,7 @@ export default async function handler(req, res) {
           for (const t of tasks) {
             const mine = myIds ? myIds.has(t.id) : (meName && t.owners?.length ? t.owners.some((o) => o.trim().toLowerCase() === meName) : null)
             if (!byProject.has(t.projectId)) byProject.set(t.projectId, { id: t.projectId, name: t.projectName, portalId: portal.id, tasks: [] })
-            byProject.get(t.projectId).tasks.push({ id: t.id, title: t.title, status: t.status, owners: t.owners, fields: t.fields, mine })
+            byProject.get(t.projectId).tasks.push({ id: t.id, title: t.title, status: t.status, owners: t.owners, fields: t.fields, url: t.url, mine })
           }
           for (const proj of byProject.values()) projects.push(proj)
         }

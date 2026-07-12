@@ -464,11 +464,18 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .focus-details { background: rgba(255,255,255,.2); border: none; color: #fff; border-radius: 9px; padding: 7px 14px; font-size: 13px; font-weight: 600; }
 .focus-details:hover { background: rgba(255,255,255,.3); }
 .focus-tasks { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
-.focus-task { display: flex; align-items: center; gap: 9px; background: rgba(255,255,255,.14); border: none; color: #fff; border-radius: 9px; padding: 8px 10px; text-align: left; font-size: 13px; transition: background .12s; }
+.focus-task { display: flex; align-items: center; gap: 4px; background: rgba(255,255,255,.14); border-radius: 9px; transition: background .12s; }
 .focus-task:hover { background: rgba(255,255,255,.22); }
+.focus-task-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; background: none; border: none; color: #fff; padding: 8px 4px 8px 10px; text-align: left; font-size: 13px; }
+.focus-task .ttl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .focus-task .check { width: 17px; height: 17px; border: 2px solid rgba(255,255,255,.85); border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; font-size: 11px; }
 .focus-task.done .check { background: #fff; color: var(--ink); }
 .focus-task.done .ttl { text-decoration: line-through; opacity: .75; }
+.focus-task-link { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 32px; color: rgba(255,255,255,.72); text-decoration: none; border-radius: 8px; }
+.focus-task-link:hover { color: #fff; background: rgba(255,255,255,.16); }
+.focus-single { display: flex; flex-direction: column; gap: 8px; }
+.focus-open { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,.16); color: #fff; border-radius: 9px; padding: 8px 12px; font-size: 12.5px; font-weight: 600; text-decoration: none; }
+.focus-open:hover { background: rgba(255,255,255,.26); }
 .focus-empty { flex: 1; display: flex; align-items: center; justify-content: center; opacity: .8; font-size: 13px; }
 .focus-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
 .focus-time { font-size: 13px; opacity: .92; font-variant-numeric: tabular-nums; }

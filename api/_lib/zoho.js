@@ -6,12 +6,14 @@ function accountsDomain() {
   return process.env.ZOHO_ACCOUNTS_DOMAIN || 'https://accounts.zoho.com'
 }
 
-// accounts.zoho.<dc>  ->  projectsapi.zoho.<dc>
-function projectsBase() {
+function dcSuffix() {
   const m = accountsDomain().match(/zoho\.([a-z.]+)$/)
-  const dc = m ? m[1] : 'com'
-  return `https://projectsapi.zoho.${dc}`
+  return m ? m[1] : 'com'
 }
+// accounts.zoho.<dc>  ->  projectsapi.zoho.<dc>
+function projectsBase() { return `https://projectsapi.zoho.${dcSuffix()}` }
+// Web app base for building clickable record links.
+function crmWebBase() { return `https://crm.zoho.${dcSuffix()}` }
 
 export const ZOHO_SCOPES = [
   'ZohoProjects.portals.READ',
@@ -142,6 +144,7 @@ async function listCrmRecords(apiDomain, accessToken, module, titleOf, subOf, cl
       title: titleOf(r),
       sub: subOf(r),
       open: !closedRe.test(r[statusField] || ''),
+      url: `${crmWebBase()}/crm/EntityInfo?module=${module}&id=${r.id}`,
       fields,
     }
   })
@@ -241,8 +244,9 @@ function mapProjectTask(t) {
     for (const [key, val] of Object.entries(raw)) if (val != null && val !== '') fields[key] = String(val)
   }
   const proj = t.project || t.project_details || {}
+  const url = t.link?.web?.url || t.link?.self?.url || (typeof t.link?.web === 'string' ? t.link.web : null) || null
   return {
-    id: zid(t), title: t.name, status: 'needsAction', owners, fields,
+    id: zid(t), title: t.name, status: 'needsAction', owners, fields, url,
     projectId: String(proj.id_string || proj.id || t.project_id || t.projectId || 'all'),
     projectName: proj.name || t.project_name || 'Tasks',
   }

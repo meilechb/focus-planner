@@ -110,17 +110,23 @@ export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNex
             const t = focus.tasks[0]
             const done = t.status === 'completed'
             return (
-              <button className={'focus-complete' + (done ? ' done' : '')} onClick={() => onToggleTask(t)}>
-                <span className="check">{done && <Icon name="check" size={12} strokeWidth={2.6} />}</span>{done ? 'Completed' : 'Mark complete'}
-              </button>
+              <div className="focus-single">
+                <button className={'focus-complete' + (done ? ' done' : '')} onClick={() => onToggleTask(t)}>
+                  <span className="check">{done && <Icon name="check" size={12} strokeWidth={2.6} />}</span>{done ? 'Completed' : 'Mark complete'}
+                </button>
+                {t.url && <a className="focus-open" href={t.url} target="_blank" rel="noreferrer" onPointerDown={(e) => e.stopPropagation()}><Icon name="externalLink" size={13} /> Open task</a>}
+              </div>
             )
           })()
         ) : (
           focus.tasks.map((t) => (
-            <button key={t.id} className={'focus-task' + (t.status === 'completed' ? ' done' : '')} onClick={() => onToggleTask(t)}>
-              <span className="check">{t.status === 'completed' && <Icon name="check" size={12} strokeWidth={2.6} />}</span>
-              <span className="ttl">{t.title}</span>
-            </button>
+            <div key={t.id} className={'focus-task' + (t.status === 'completed' ? ' done' : '')}>
+              <button className="focus-task-toggle" onClick={() => onToggleTask(t)}>
+                <span className="check">{t.status === 'completed' && <Icon name="check" size={12} strokeWidth={2.6} />}</span>
+                <span className="ttl">{t.title}</span>
+              </button>
+              {t.url && <a className="focus-task-link" href={t.url} target="_blank" rel="noreferrer" title="Open" onPointerDown={(e) => e.stopPropagation()}><Icon name="externalLink" size={13} /></a>}
+            </div>
           ))
         )}
       </div>
