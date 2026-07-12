@@ -132,17 +132,19 @@ export async function listCrmFields(apiDomain, accessToken, module) {
 // Fetch records with every requested field, tagging each with a { fields } map
 // and an `open` default flag. No hard server-side filter — the panel decides.
 async function listCrmRecords(apiDomain, accessToken, module, titleOf, subOf, closedRe, fieldNames) {
-  const base = module === 'Deals' ? ['Deal_Name', 'Stage', 'Amount', 'Account_Name'] : ['Full_Name', 'Last_Name', 'Company', 'Lead_Status']
+  const base = module === 'Deals' ? ['Deal_Name', 'Stage', 'Amount', 'Account_Name', 'Next_Step'] : ['Full_Name', 'Last_Name', 'Company', 'Lead_Status']
   const all = [...new Set([...base, 'Owner', ...fieldNames])].slice(0, 50).join(',')
   const rows = await crmGet(apiDomain, accessToken, module, all)
   const statusField = module === 'Deals' ? 'Stage' : 'Lead_Status'
   return rows.map((r) => {
     const fields = {}
     for (const n of new Set(['Owner', statusField, ...fieldNames])) fields[n] = fieldVal(r[n])
+    const nextStep = module === 'Deals' ? fieldVal(r.Next_Step) : null
     return {
       id: String(r.id),
       title: titleOf(r),
       sub: subOf(r),
+      note: nextStep ? `Next: ${nextStep}` : null,
       open: !closedRe.test(r[statusField] || ''),
       url: `${crmWebBase()}/crm/EntityInfo?module=${module}&id=${r.id}`,
       fields,

@@ -414,7 +414,7 @@ export default function Planner() {
       const leads = zoho.crm?.leads || []
       const zprojects = zoho.projects || []
       const crmLists = []
-      if (deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, url: d.url, source: 'zoho' })).filter(searchOk) })
+      if (deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, note: d.note, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, url: d.url, source: 'zoho' })).filter(searchOk) })
       if (leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, url: d.url, source: 'zoho' })).filter(searchOk) })
       if (crmLists.length) groups.push({ id: 'zoho-crm', account: 'Zoho CRM', lists: crmLists, dealFields: zoho.crm?.dealFields || [], leadFields: zoho.crm?.leadFields || [] })
       if (zprojects.length) {
