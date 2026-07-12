@@ -75,6 +75,8 @@ export default function Planner() {
   const [editProject, setEditProject] = useState(null)
   const [editBlock, setEditBlock] = useState(null) // { block, day }
   const [showConn, setShowConn] = useState(false)
+  const [settingsTab, setSettingsTab] = useState('connections')
+  const openSettings = (tab) => { setSettingsTab(typeof tab === 'string' ? tab : 'connections'); setShowConn(true) }
   const [showHelp, setShowHelp] = useState(false)
   const [showCmd, setShowCmd] = useState(false)
   const [navCfg, setNavCfg] = useState(readNavCfg)
@@ -479,10 +481,11 @@ export default function Planner() {
         connected={connected} hasZoho={hasZoho} groups={displayGroups}
         taskFilter={taskFilter} setTaskFilter={setTaskFilter} taskSearch={taskSearch} setTaskSearch={setTaskSearch}
         collapsed={collapsed} setCollapsed={setCollapsed} sections={sections} setSections={setSections}
-        connections={connections} onOpenConnections={() => setShowConn(true)}
+        connections={connections} onOpenSettings={openSettings}
         remState={remState} onEnableReminders={enableReminders}
         tz={tz} today={today}
-        navCfg={navCfg} onCustomize={() => setShowConn(true)}
+        navCfg={navCfg}
+        calAccounts={calAccounts} selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
       />
 
       <main className="main">
@@ -579,7 +582,7 @@ export default function Planner() {
           navCfg={navCfg} onNavChange={updateNavCfg} groups={displayGroups} connected={connected} hasZoho={hasZoho}
           zoom={zoom} setZoom={setZoom} tz={tz} onChangeTz={(v) => { setTz(v); saveKey('timezone', v) }}
           focusHidden={focusHidden} setFocusHidden={setFocusHidden} remState={remState} onEnableReminders={enableReminders}
-          theme={theme} setTheme={setTheme}
+          theme={theme} setTheme={setTheme} initialTab={settingsTab}
           zohoErrors={zoho?.errors} onClose={() => setShowConn(false)} />
       )}
       {showHelp && <ShortcutsModal onClose={() => setShowHelp(false)} />}
@@ -831,9 +834,13 @@ function MonthGrid({ viewDate, today, blocksByDay, meetingsFor, blockColor, bloc
 function Sidebar(props) {
   const {
     projects, onNewProject, onEditProject, onDeleteProject, favorites, isFav, toggleFav, connected, hasZoho, groups,
-    taskFilter, setTaskFilter, taskSearch, setTaskSearch, collapsed, setCollapsed, sections, setSections,
-    connections, onOpenConnections, remState, onEnableReminders, tz, today, navCfg, onCustomize,
+    taskFilter, setTaskFilter, taskSearch, setTaskSearch, collapsed, setCollapsed,
+    connections, onOpenSettings, remState, onEnableReminders, tz, today, navCfg,
+    calAccounts, selectedCalendars, toggleCalendar,
   } = props
+  const [secOpen, setSecOpen] = useState({})
+  const isOpen = (id, def = true) => (secOpen[id] === undefined ? def : secOpen[id])
+  const tog = (id, def = true) => setSecOpen((o) => ({ ...o, [id]: !isOpen(id, def) }))
   function dueBadge(due) {
     if (!due) return null
     const iso = localDateISO(due, tz)
@@ -861,7 +868,6 @@ function Sidebar(props) {
   const dragTask = (e, task, g, l) => { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', task: { ...task, connId: g.id, listId: l.id } })); chip(e, task.title, g.id.startsWith('zoho') ? '#e42527' : '#2563eb') }
   const dragBatch = (e, g, l, only) => { const tasks = (only || l.tasks).filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })); e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: l.title, tasks })); chip(e, `${l.title} · ${tasks.length}`, g.id.startsWith('zoho') ? '#e42527' : '#2563eb') }
   const dragFav = (e, f) => { e.dataTransfer.setData('application/json', JSON.stringify(f.payload)); chip(e, f.label, f.color) }
-  const toggleSec = (k) => setSections({ ...sections, [k]: !sections[k] })
 
   const projEntry = (p) => ({ id: 'p:' + p.id, kind: 'project', label: p.name, color: p.color, projectId: p.id, payload: { kind: 'project', projectId: p.id } })
   const taskEntry = (t, g, l) => ({ id: `t:${g.id}:${l.id}:${t.id}`, kind: 'task', label: t.title, color: g.id.startsWith('zoho') ? '#e42527' : '#2563eb', payload: { kind: 'task', task: { ...t, connId: g.id, listId: l.id } } })
@@ -905,107 +911,138 @@ function Sidebar(props) {
     .filter((g) => g.lists.length)
   const taskCount = visibleGroups.reduce((a, g) => a + g.lists.reduce((b, l) => b + listTasks(g, l).length, 0), 0)
 
+  // Meta (color / icon / settings tab / title) for a connected-source section.
+  const groupMeta = (g) => {
+    if (g.id === 'zoho-crm') return { color: '#e42527', icon: 'list', title: 'Zoho CRM', tab: 'crm' }
+    if (g.id === 'zoho-projects') return { color: '#e8590c', icon: 'folder', title: 'Zoho Projects', tab: 'projects' }
+    return { color: '#2563eb', icon: 'check', title: 'Google Tasks', tab: 'gtasks' }
+  }
+  const calAcc = (calAccounts || []).filter((a) => (a.calendars || []).length)
+  const hasCal = calAcc.length > 0
+
+  // Renders the lists+tasks inside a connected-source section.
+  const renderGroup = (g) => g.lists.map((l) => {
+    const key = g.id + '/' + l.id
+    const col = collapsed[key] === undefined ? true : collapsed[key]
+    const tasks = listTasks(g, l)
+    const favId = listFavId(g, l)
+    return (
+      <div key={l.id}>
+        <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l, tasks)}>
+          <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !col })}><Icon name={col ? 'chevronRight' : 'chevronDown'} size={15} /></button>
+          <span className="tlist-title">{l.title}</span>
+          <button className={'star' + (isFav(favId) ? ' on' : '')} title="Favorite this list as a block" onClick={(e) => { e.stopPropagation(); toggleFav(batchEntry(g, l, tasks)) }}><Icon name="star" size={14} filled={isFav(favId)} /></button>
+          <span className="tlist-count">{tasks.length}</span>
+        </div>
+        {!col && tasks.map((t) => {
+          const tid = `t:${g.id}:${l.id}:${t.id}`
+          return (
+            <div key={t.id} className="titem" draggable onDragStart={(e) => dragTask(e, t, g, l)}>
+              <span className="tdot" />
+              <span className="titem-body">{t.title}{t.sub ? <div className="tsub">{t.sub}</div> : null}</span>
+              {dueBadge(t.due)}
+              <button className={'star' + (isFav(tid) ? ' on' : '')} title="Favorite" onClick={(e) => { e.stopPropagation(); toggleFav(taskEntry(t, g, l)) }}><Icon name="star" size={14} filled={isFav(tid)} /></button>
+            </div>
+          )
+        })}
+        {!col && tasks.length === 0 && <div className="muted tlist-empty">{g.id === 'zoho-projects' && navCfg.zohoAssignee !== 'all' ? 'None assigned to you' : 'Empty'}</div>}
+      </div>
+    )
+  })
+
   return (
     <aside className="sidebar">
       <div className="brand"><span className="dot" /> Focus Planner</div>
 
       {favorites.length > 0 && (
         <div className="sb-pinned">
-          <div className="sb-block">
-            <div className="sb-head"><span><span className="sb-ic"><Icon name="star" size={13} filled /></span> Favorites{favorites.length > 0 && <span className="sec-count">{favorites.length}</span>}</span></div>
-            <div className="fav-grid">
-              {favorites.map((f) => (
-                <div key={f.id} className="fav-card" style={{ background: f.color }} draggable onDragStart={(e) => dragFav(e, f)}
-                  onClick={() => { if (f.kind === 'project') { const p = projects.find((x) => x.id === f.projectId); if (p) onEditProject(p) } }}>
-                  <span className="fav-ic"><Icon name={favIcon(f.kind)} size={14} /></span>
-                  <span className="fav-name">{f.label}</span>
-                  <button className="fav-x" title="Unfavorite" onClick={(e) => { e.stopPropagation(); toggleFav(f) }}><Icon name="star" size={13} filled /></button>
-                </div>
-              ))}
-            </div>
+          <div className="sbx-label"><span className="sbx-label-ic" style={{ '--c': '#f5b301' }}><Icon name="star" size={12} filled /></span> Favorites <span className="sbx-count">{favorites.length}</span></div>
+          <div className="fav-grid">
+            {favorites.map((f) => (
+              <div key={f.id} className="fav-card" style={{ background: f.color }} draggable onDragStart={(e) => dragFav(e, f)}
+                onClick={() => { if (f.kind === 'project') { const p = projects.find((x) => x.id === f.projectId); if (p) onEditProject(p) } }}>
+                <span className="fav-ic"><Icon name={favIcon(f.kind)} size={14} /></span>
+                <span className="fav-name">{f.label}</span>
+                <button className="fav-x" title="Unfavorite" onClick={(e) => { e.stopPropagation(); toggleFav(f) }}><Icon name="star" size={13} filled /></button>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
       <div className="sb-scroll">
-        <div className="sb-block">
-          <div className="sb-head clickable" onClick={() => toggleSec('projects')}>
-            <span><span className="sb-ic"><Icon name="folder" size={13} /></span> Projects{projects.length > 0 && <span className="sec-count">{projects.length}</span>}</span><span className="caret"><Icon name={sections.projects ? 'chevronRight' : 'chevronDown'} size={16} /></span>
-          </div>
-          {!sections.projects && (
-            <>
-              <div className="proj-list">
-                {projects.map((p) => (
-                  <div key={p.id} className="proj-row" draggable onDragStart={(e) => dragProject(e, p)}>
-                    <span className="swatch" style={{ background: p.color }} />
-                    <span className="proj-name" onClick={() => onEditProject(p)}>{p.name}</span>
-                    <button className={'star' + (isFav('p:' + p.id) ? ' on' : '')} title="Favorite" onClick={() => toggleFav(projEntry(p))}><Icon name="star" size={14} filled={isFav('p:' + p.id)} /></button>
-                    <button className="row-x" onClick={() => onDeleteProject(p.id)}><Icon name="x" size={14} /></button>
-                  </div>
-                ))}
-                {projects.length === 0 && <div className="muted" style={{ padding: '2px 8px' }}>No projects yet — add one and drag it onto the grid.</div>}
-              </div>
-              <button className="btn new-proj" onClick={onNewProject}><Icon name="plus" size={15} /> New project</button>
-            </>
-          )}
-        </div>
+        {hasCal && (
+          <SbSection id="calendar" color="#0f9d58" icon="calendar" title="Calendar" count={calAcc.reduce((n, a) => n + a.calendars.filter((c) => selectedCalendars.includes(`${a.connId}::${c.id}`)).length, 0)}
+            open={isOpen('calendar')} onToggle={() => tog('calendar')} onSettings={() => onOpenSettings('calendar')}>
+            {calAcc.map((a) => a.calendars.map((c) => { const k = `${a.connId}::${c.id}`; const on = selectedCalendars.includes(k); return (
+              <button key={k} className={'cal-toggle' + (on ? ' on' : '')} onClick={() => toggleCalendar(k)}>
+                <span className="cal-dot" style={{ background: on ? (c.color || '#0f9d58') : 'transparent', borderColor: c.color || '#0f9d58' }} />
+                <span className="cal-name">{c.summary}</span>
+              </button>
+            ) }))}
+          </SbSection>
+        )}
 
-        <div className="sb-block">
-          <div className="sb-head"><span><span className="sb-ic"><Icon name="check" size={13} /></span> Tasks{taskCount > 0 && <span className="sec-count">{taskCount}</span>}</span>
-            <div className="seg">
-              <button className={'seg-btn' + (taskFilter === 'all' ? ' on' : '')} onClick={() => setTaskFilter('all')}>All</button>
-              <button className={'seg-btn' + (taskFilter === 'today' ? ' on' : '')} onClick={() => setTaskFilter('today')}>Today</button>
-            </div>
+        <div className="sbx-label"><span className="sbx-label-ic" style={{ '--c': 'var(--accent)' }}><Icon name="sidebar" size={12} /></span> Blocks</div>
+
+        <SbSection id="custom" color="#7c3aed" icon="folder" title="Custom" count={projects.length || null}
+          open={isOpen('custom')} onToggle={() => tog('custom')}>
+          <div className="proj-list">
+            {projects.map((p) => (
+              <div key={p.id} className="proj-row" draggable onDragStart={(e) => dragProject(e, p)}>
+                <span className="swatch" style={{ background: p.color }} />
+                <span className="proj-name" onClick={() => onEditProject(p)}>{p.name}</span>
+                <button className={'star' + (isFav('p:' + p.id) ? ' on' : '')} title="Favorite" onClick={() => toggleFav(projEntry(p))}><Icon name="star" size={14} filled={isFav('p:' + p.id)} /></button>
+                <button className="row-x" title="Delete" onClick={() => onDeleteProject(p.id)}><Icon name="x" size={14} /></button>
+              </div>
+            ))}
+            {projects.length === 0 && <div className="muted" style={{ padding: '2px 8px 6px' }}>Add a project and drag it onto the grid to block time.</div>}
           </div>
+          <button className="btn new-proj" onClick={onNewProject}><Icon name="plus" size={15} /> New project</button>
+        </SbSection>
+
+        {(connected || hasZoho) && (visibleGroups.length > 0) && (
           <div className="task-search"><Icon name="search" size={15} className="search-ic" /><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
-          {!connected && !hasZoho && (
-            <div className="empty-hint">No accounts connected.<br /><button className="link" onClick={onOpenConnections}>Connect Google or Zoho</button> to see your tasks.</div>
-          )}
-          {visibleGroups.map((g) => (
-            <div key={g.id} className="tgroup">
-              <div className="tgroup-head"><span className="acct-dot" style={{ background: g.id.startsWith('zoho') ? '#e42527' : '#2563eb' }} />{g.account}</div>
-              {g.lists.map((l) => {
-                const key = g.id + '/' + l.id
-                const col = collapsed[key] === undefined ? true : collapsed[key] // auto-collapsed by default
-                const tasks = listTasks(g, l)
-                const favId = listFavId(g, l)
-                return (
-                  <div key={l.id}>
-                    <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l, tasks)}>
-                      <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !col })}><Icon name={col ? 'chevronRight' : 'chevronDown'} size={15} /></button>
-                      <span className="tlist-title">{l.title}</span>
-                      <button className={'star' + (isFav(favId) ? ' on' : '')} title="Favorite this list as a block" onClick={(e) => { e.stopPropagation(); toggleFav(batchEntry(g, l, tasks)) }}><Icon name="star" size={14} filled={isFav(favId)} /></button>
-                      <span className="tlist-count">{tasks.length}</span>
-                    </div>
-                    {!col && tasks.map((t) => {
-                      const tid = `t:${g.id}:${l.id}:${t.id}`
-                      return (
-                        <div key={t.id} className="titem" draggable onDragStart={(e) => dragTask(e, t, g, l)}>
-                          <span className="tdot" />
-                          <span className="titem-body">{t.title}{t.sub ? <div className="tsub">{t.sub}</div> : null}</span>
-                          {dueBadge(t.due)}
-                          <button className={'star' + (isFav(tid) ? ' on' : '')} title="Favorite" onClick={(e) => { e.stopPropagation(); toggleFav(taskEntry(t, g, l)) }}><Icon name="star" size={14} filled={isFav(tid)} /></button>
-                        </div>
-                      )
-                    })}
-                    {!col && tasks.length === 0 && <div className="muted tlist-empty">{g.id === 'zoho-projects' && navCfg.zohoAssignee !== 'all' ? 'None assigned to you' : 'Empty'}</div>}
-                  </div>
-                )
-              })}
-            </div>
-          ))}
-          {(connected || hasZoho) && visibleGroups.every((g) => g.lists.every((l) => !listTasks(g, l).length)) && (
-            <div className="muted" style={{ padding: '8px' }}>No open tasks{taskSearch ? ' match your search' : ''}.</div>
-          )}
-        </div>
+        )}
+
+        {visibleGroups.map((g) => {
+          const m = groupMeta(g)
+          const cnt = g.lists.reduce((n, l) => n + listTasks(g, l).length, 0)
+          return (
+            <SbSection key={g.id} id={g.id} color={m.color} icon={m.icon} title={m.title} count={cnt}
+              open={isOpen(g.id)} onToggle={() => tog(g.id)} onSettings={() => onOpenSettings(m.tab)}>
+              {renderGroup(g)}
+            </SbSection>
+          )
+        })}
+
+        {!connected && !hasZoho && (
+          <div className="empty-hint">No accounts connected yet.<br /><button className="link" onClick={() => onOpenSettings('connections')}>Connect Google or Zoho</button> to pull in tasks, deals & projects.</div>
+        )}
       </div>
 
       <div className="sidebar-foot">
-        <button className="btn conn-btn" onClick={onOpenConnections}>
+        <button className="btn conn-btn" onClick={() => onOpenSettings('connections')}>
           <span className="gear"><Icon name="settings" size={15} /></span> Settings
         </button>
       </div>
     </aside>
+  )
+}
+
+// A collapsible sidebar section: colored icon chip, title, count, hover gear.
+function SbSection({ id, color, icon, title, count, open, onToggle, onSettings, children }) {
+  return (
+    <div className={'sbx' + (open ? ' open' : '')}>
+      <div className="sbx-head" onClick={onToggle}>
+        <span className="sbx-ic" style={{ '--c': color }}><Icon name={icon} size={14} /></span>
+        <span className="sbx-title">{title}</span>
+        {count != null && <span className="sbx-count">{count}</span>}
+        {onSettings && <button className="sbx-gear" title="Settings" onClick={(e) => { e.stopPropagation(); onSettings() }}><Icon name="settings" size={14} /></button>}
+        <span className="sbx-caret"><Icon name={open ? 'chevronDown' : 'chevronRight'} size={15} /></span>
+      </div>
+      {open && <div className="sbx-body">{children}</div>}
+    </div>
   )
 }
 
@@ -1066,7 +1103,7 @@ function SettingsModal(props) {
   const {
     connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar,
     taskAccounts, selectedTaskLists, toggleTaskList, navCfg, onNavChange, groups, connected, hasZoho,
-    zoom, setZoom, tz, onChangeTz, focusHidden, setFocusHidden, remState, onEnableReminders, theme, setTheme, zohoErrors, onClose,
+    zoom, setZoom, tz, onChangeTz, focusHidden, setFocusHidden, remState, onEnableReminders, theme, setTheme, initialTab, zohoErrors, onClose,
   } = props
   const googleHasTasks = connections.some((c) => c.provider === 'google' && (c.extra?.features || ['calendar', 'tasks']).includes('tasks'))
   const cats = [
@@ -1078,7 +1115,7 @@ function SettingsModal(props) {
     { id: 'focus', label: 'Focus & reminders', icon: 'bell' },
     { id: 'general', label: 'General', icon: 'sliders' },
   ].filter(Boolean)
-  const [tab, setTab] = useState('connections')
+  const [tab, setTab] = useState(cats.some((c) => c.id === initialTab) ? initialTab : 'connections')
   const [addGoogle, setAddGoogle] = useState(false)
   const [gfeats, setGfeats] = useState({ calendar: true, tasks: true })
 
