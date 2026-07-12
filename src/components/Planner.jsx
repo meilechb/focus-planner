@@ -624,7 +624,6 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, si
   const gotoMonth = (n) => setViewDate(addMonths(viewDate, n))
   return (
     <div className="topbar">
-      <button className="icon-btn" title="Toggle sidebar" onClick={onToggleSidebar}><Icon name="sidebar" size={18} /></button>
       <button className="btn" onClick={() => setViewDate(today)}>Today</button>
       <div className="nav-group">
         <button className="icon-btn" title="Previous" onClick={() => (view === 'month' ? gotoMonth(-1) : setViewDate(addDays(viewDate, -step)))}><Icon name="chevronLeft" size={18} /></button>
@@ -925,8 +924,13 @@ function Sidebar(props) {
     if (g.id === 'zoho-projects') return { color, icon: 'folder', title: 'Zoho Projects', tab: 'projects' }
     return { color, icon: 'check', title: 'Google Tasks', tab: 'gtasks' }
   }
-  const calAcc = (calAccounts || []).filter((a) => (a.calendars || []).length)
-  const hasCal = calAcc.length > 0
+  // Drag an ENTIRE connector (e.g. all of Zoho CRM) onto the grid as one block.
+  const dragBatchAll = (e, g) => {
+    const color = srcColor(navCfg, g.id)
+    const tasks = g.lists.flatMap((l) => listTasks(g, l).filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })))
+    e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', color, title: groupMeta(g).title, tasks }))
+    chip(e, `${groupMeta(g).title} · ${tasks.length}`, color)
+  }
 
   // Renders the lists+tasks inside a connected-source section.
   const renderGroup = (g) => g.lists.map((l) => {
@@ -936,8 +940,8 @@ function Sidebar(props) {
     const favId = listFavId(g, l)
     return (
       <div key={l.id}>
-        <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l, tasks)}>
-          <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !col })}><Icon name={col ? 'chevronRight' : 'chevronDown'} size={15} /></button>
+        <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l, tasks)} onClick={() => setCollapsed({ ...collapsed, [key]: !col })}>
+          <span className="caret"><Icon name={col ? 'chevronRight' : 'chevronDown'} size={15} /></span>
           <span className="tlist-title">{l.title}</span>
           <button className={'star' + (isFav(favId) ? ' on' : '')} title="Favorite this list as a block" onClick={(e) => { e.stopPropagation(); toggleFav(batchEntry(g, l, tasks)) }}><Icon name="star" size={14} filled={isFav(favId)} /></button>
           <span className="tlist-count">{tasks.length}</span>
@@ -962,11 +966,17 @@ function Sidebar(props) {
     <aside className="sidebar">
       <div className="brand"><span className="dot" /> Focus Planner</div>
 
+      <div className="sb-search">
+        <Icon name="search" size={15} className="search-ic" />
+        <input className="field" placeholder="Search everything…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} />
+        {taskSearch && <button className="sb-search-x" onClick={() => setTaskSearch('')}><Icon name="x" size={14} /></button>}
+      </div>
+
       {favorites.length > 0 && (
         <div className="sb-pinned">
           <div className="sbx-label"><span className="sbx-label-ic" style={{ '--c': '#f5b301' }}><Icon name="star" size={12} filled /></span> Favorites <span className="sbx-count">{favorites.length}</span></div>
           <div className="fav-grid">
-            {favorites.map((f) => (
+            {favorites.filter((f) => !taskSearch || (f.label || '').toLowerCase().includes(taskSearch.toLowerCase())).map((f) => (
               <div key={f.id} className="fav-card" style={{ background: f.color }} draggable onDragStart={(e) => dragFav(e, f)}
                 onClick={() => { if (f.kind === 'project') { const p = projects.find((x) => x.id === f.projectId); if (p) onEditProject(p) } }}>
                 <span className="fav-ic"><Icon name={favIcon(f.kind)} size={14} /></span>
@@ -979,21 +989,12 @@ function Sidebar(props) {
       )}
 
       <div className="sb-scroll">
-        {hasCal && (
-          <SbSection id="calendar" color="#0f9d58" icon="calendar" title="Calendar" count={calAcc.reduce((n, a) => n + a.calendars.filter((c) => selectedCalendars.includes(`${a.connId}::${c.id}`)).length, 0)}
-            open={isOpen('calendar')} onToggle={() => tog('calendar')} onSettings={() => onOpenSettings('calendar')}>
-            {calAcc.map((a) => a.calendars.map((c) => { const k = `${a.connId}::${c.id}`; const on = selectedCalendars.includes(k); return (
-              <button key={k} className={'cal-toggle' + (on ? ' on' : '')} onClick={() => toggleCalendar(k)}>
-                <span className="cal-dot" style={{ background: on ? (c.color || '#0f9d58') : 'transparent', borderColor: c.color || '#0f9d58' }} />
-                <span className="cal-name">{c.summary}</span>
-              </button>
-            ) }))}
-          </SbSection>
-        )}
+        <div className="sbx-label">
+          <span className="sbx-label-ic" style={{ '--c': 'var(--accent)' }}><Icon name="folder" size={12} /></span> Blocks
+          <button className="sbx-label-add" title="Add a connector" onClick={() => onOpenSettings('connections')}><Icon name="plus" size={14} /></button>
+        </div>
 
-        <div className="sbx-label"><span className="sbx-label-ic" style={{ '--c': 'var(--accent)' }}><Icon name="sidebar" size={12} /></span> Blocks</div>
-
-        <SbSection id="custom" color="#7c3aed" icon="folder" title="Custom" count={projects.length || null}
+        <SbSection color="#7c3aed" icon="folder" title="Custom" count={projects.length || null}
           open={isOpen('custom')} onToggle={() => tog('custom')}>
           <div className="proj-list">
             {projects.map((p) => (
@@ -1009,16 +1010,12 @@ function Sidebar(props) {
           <button className="btn new-proj" onClick={onNewProject}><Icon name="plus" size={15} /> New project</button>
         </SbSection>
 
-        {(connected || hasZoho) && (visibleGroups.length > 0) && (
-          <div className="task-search"><Icon name="search" size={15} className="search-ic" /><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
-        )}
-
         {visibleGroups.map((g) => {
           const m = groupMeta(g)
           const cnt = g.lists.reduce((n, l) => n + listTasks(g, l).length, 0)
           return (
-            <SbSection key={g.id} id={g.id} color={m.color} icon={m.icon} title={m.title} count={cnt}
-              open={isOpen(g.id)} onToggle={() => tog(g.id)} onSettings={() => onOpenSettings(m.tab)}>
+            <SbSection key={g.id} color={m.color} icon={m.icon} title={m.title} count={cnt}
+              open={isOpen(g.id)} onToggle={() => tog(g.id)} onSettings={() => onOpenSettings(m.tab)} onDragStart={(e) => dragBatchAll(e, g)}>
               {renderGroup(g)}
             </SbSection>
           )
@@ -1039,10 +1036,11 @@ function Sidebar(props) {
 }
 
 // A collapsible sidebar section: colored icon chip, title, count, hover gear.
-function SbSection({ id, color, icon, title, count, open, onToggle, onSettings, children }) {
+// Source sections are draggable (onDragStart) so the whole connector drops as one block.
+function SbSection({ color, icon, title, count, open, onToggle, onSettings, onDragStart, children }) {
   return (
     <div className={'sbx' + (open ? ' open' : '')}>
-      <div className="sbx-head" onClick={onToggle}>
+      <div className="sbx-head" onClick={onToggle} draggable={!!onDragStart} onDragStart={onDragStart} title={onDragStart ? 'Drag onto the calendar to block this whole source' : undefined}>
         <span className="sbx-ic" style={{ '--c': color }}><Icon name={icon} size={14} /></span>
         <span className="sbx-title">{title}</span>
         {count != null && <span className="sbx-count">{count}</span>}
