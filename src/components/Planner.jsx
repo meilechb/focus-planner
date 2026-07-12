@@ -10,27 +10,29 @@ import FocusCard from './FocusCard.jsx'
 
 const DEFAULT_TZ = 'America/New_York'
 const ZOOM_KEY = 'focus_zoom'
+const CACHE_KEY = 'focus_cache'
+function readCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}') } catch { return {} } }
 const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 const timeToMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m }
 
 export default function Planner() {
-  const [tz, setTz] = useState(DEFAULT_TZ)
-  const [projects, setProjects] = useState([])
-  const [blocks, setBlocks] = useState({})
+  const [tz, setTz] = useState(() => readCache().tz || DEFAULT_TZ)
+  const [projects, setProjects] = useState(() => readCache().projects || [])
+  const [blocks, setBlocks] = useState(() => readCache().blocks || {})
   const [connections, setConnections] = useState([])
   const [storageOk, setStorageOk] = useState(true)
   const [banner, setBanner] = useState('')
 
   const [calAccounts, setCalAccounts] = useState([])
   const [taskAccounts, setTaskAccounts] = useState([])
-  const [selectedCalendars, setSelectedCalendars] = useState([])
-  const [selectedTaskLists, setSelectedTaskLists] = useState([])
+  const [selectedCalendars, setSelectedCalendars] = useState(() => readCache().selectedCalendars || [])
+  const [selectedTaskLists, setSelectedTaskLists] = useState(() => readCache().selectedTaskLists || [])
   const [rangeEvents, setRangeEvents] = useState([]) // events across the visible range, each with .date
   const [todayEvents, setTodayEvents] = useState([]) // events for today (drives the focus card)
   const [gtasks, setGtasks] = useState([])
   const [zoho, setZoho] = useState({ crm: { deals: [], leads: [] }, projects: [], errors: [] })
 
-  const [viewDate, setViewDate] = useState(() => isoDate(new Date(), DEFAULT_TZ))
+  const [viewDate, setViewDate] = useState(() => isoDate(new Date(), readCache().tz || DEFAULT_TZ))
   const [view, setView] = useState('day') // day | week | month
   const [zoom, setZoom] = useState(() => Number(localStorage.getItem(ZOOM_KEY)) || 1.3)
   const [now, setNow] = useState(() => nowMinutes(DEFAULT_TZ))
@@ -51,6 +53,10 @@ export default function Planner() {
   const hasZoho = connections.some((c) => c.provider === 'zoho')
 
   useEffect(() => { localStorage.setItem(ZOOM_KEY, String(zoom)) }, [zoom])
+  // instant paint on next load
+  useEffect(() => {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ tz, projects, blocks, selectedCalendars, selectedTaskLists }))
+  }, [tz, projects, blocks, selectedCalendars, selectedTaskLists])
 
   // --- boot -----------------------------------------------------------------
   useEffect(() => {
@@ -88,14 +94,23 @@ export default function Planner() {
       ])
       setCalAccounts(cal.accounts || [])
       setTaskAccounts(tl.accounts || [])
-      if (!(state?.selectedCalendars || []).length) {
-        const all = (cal.accounts || []).flatMap((a) => a.calendars.map((c) => `${a.connId}::${c.id}`))
-        setSelectedCalendars(all); saveKey('selectedCalendars', all)
+      // Auto-select everything for any account that has NOTHING selected yet
+      // (a newly connected account), without clobbering per-account choices.
+      const baseCals = state?.selectedCalendars || []
+      const nextCals = [...baseCals]
+      for (const a of cal.accounts || []) {
+        const keys = a.calendars.map((c) => `${a.connId}::${c.id}`)
+        if (keys.length && !keys.some((k) => nextCals.includes(k))) nextCals.push(...keys)
       }
-      if (!(state?.selectedTaskLists || []).length) {
-        const all = (tl.accounts || []).flatMap((a) => a.lists.map((l) => `${a.connId}::${l.id}`))
-        setSelectedTaskLists(all); saveKey('selectedTaskLists', all)
+      if (nextCals.length !== baseCals.length) { setSelectedCalendars(nextCals); saveKey('selectedCalendars', nextCals) }
+
+      const baseLists = state?.selectedTaskLists || []
+      const nextLists = [...baseLists]
+      for (const a of tl.accounts || []) {
+        const keys = a.lists.map((l) => `${a.connId}::${l.id}`)
+        if (keys.length && !keys.some((k) => nextLists.includes(k))) nextLists.push(...keys)
       }
+      if (nextLists.length !== baseLists.length) { setSelectedTaskLists(nextLists); saveKey('selectedTaskLists', nextLists) }
     } catch (e) { console.error('google meta', e) }
   }
   async function loadZoho() {
@@ -347,8 +362,7 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, si
       {view !== 'month' && (
         <div className="density">
           <span className="lbl">Density</span>
-          <button className="icon-btn" title="Compact" onClick={() => setZoom((z) => clamp(+(z - 0.3).toFixed(2), 0.7, 3))}>−</button>
-          <button className="icon-btn" title="Roomy" onClick={() => setZoom((z) => clamp(+(z + 0.3).toFixed(2), 0.7, 3))}>+</button>
+          <input type="range" min="0.7" max="3" step="0.05" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} />
         </div>
       )}
       <div className="seg">
@@ -459,8 +473,8 @@ function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsF
                 onDrop={(e) => { e.preventDefault(); try { onDropPayload(d, JSON.parse(e.dataTransfer.getData('application/json')), yToMin(d, e.clientY)) } catch {} }}>
                 {hours.map((h) => <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom, left: 0 }} />)}
                 {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 2, right: 2 }} />)}
-                {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 2, right: 2 }} title={m.title}><div className="ev-title">{m.title}</div></div>)}
-                {bl.map((b) => <div key={b.id} className="ev ev-block" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 2, right: 2, background: blockColor(b) }} onClick={(e) => { e.stopPropagation(); onEdit(b, d) }}><div className="ev-title">{blockName(b)}</div></div>)}
+                {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 2, right: 2 }} title={`${m.title} · ${label(m.start)}`}><div className="ev-title">{m.title}</div>{(m.end - m.start) * zoom > 28 && <div className="ev-time">{label(m.start)}</div>}</div>)}
+                {bl.map((b) => <div key={b.id} className="ev ev-block" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 2, right: 2, background: blockColor(b) }} onClick={(e) => { e.stopPropagation(); onEdit(b, d) }} title={`${blockName(b)} · ${label(b.start)}`}><div className="ev-title">{blockName(b)}</div>{(b.end - b.start) * zoom > 28 && <div className="ev-time">{label(b.start)}</div>}</div>)}
                 {d === today && now >= DAY_START && now <= DAY_END && <div className="now-line" style={{ top: (now - DAY_START) * zoom, left: 0 }}><span className="now-dot" /></div>}
               </div>
             )
@@ -512,7 +526,7 @@ function Sidebar(props) {
     <aside className="sidebar">
       <div className="brand"><span className="dot" /> Focus Planner</div>
 
-      <div className="sb-section">
+      <div className="sb-fixed">
         <div className="sb-head clickable" onClick={() => toggleSec('projects')}>
           <span>Projects</span><span className="caret">{sections.projects ? '▸' : '▾'}</span>
         </div>
@@ -527,7 +541,7 @@ function Sidebar(props) {
                   <button className="row-x" onClick={() => onDeleteProject(p.id)}>×</button>
                 </div>
               ))}
-              {projects.length === 0 && <div className="muted" style={{ padding: '4px 8px' }}>Add a project, then drag it onto the grid to block time.</div>}
+              {projects.length === 0 && <div className="muted" style={{ padding: '2px 8px' }}>Add a project, then drag it onto the grid.</div>}
             </div>
             <form className="add-proj" onSubmit={(e) => { e.preventDefault(); if (newName.trim()) { onAddProject(newName.trim()); setNewName('') } }}>
               <input className="field" placeholder="New project…" value={newName} onChange={(e) => setNewName(e.target.value)} />
@@ -537,83 +551,123 @@ function Sidebar(props) {
         )}
       </div>
 
-      <div className="sb-section">
-        <div className="sb-head"><span>Tasks</span>
+      <div className="sb-tasks">
+        <div className="sb-head sticky"><span>Tasks</span>
           <div className="seg">
             <button className={'seg-btn' + (taskFilter === 'all' ? ' on' : '')} onClick={() => setTaskFilter('all')}>All</button>
             <button className={'seg-btn' + (taskFilter === 'today' ? ' on' : '')} onClick={() => setTaskFilter('today')}>Today</button>
           </div>
         </div>
         <div className="task-search"><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
-        {!connected && !hasZoho && <div className="demo-note">Demo tasks — connect an account below for your real tasks.</div>}
-        {groups.map((g) => (
-          <div key={g.id} className="tgroup">
-            <div className="tgroup-head">{g.account}</div>
-            {g.lists.map((l) => {
-              const key = g.id + '/' + l.id; const col = collapsed[key]
-              return (
-                <div key={l.id}>
-                  <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l)}>
-                    <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !col })}>{col ? '▸' : '▾'}</button>
-                    <span className="tlist-title">{l.title}</span><span className="tlist-count">{l.tasks.length}</span>
-                  </div>
-                  {!col && l.tasks.map((t) => (
-                    <div key={t.id} className="titem" draggable onDragStart={(e) => dragTask(e, t, g, l)}>
-                      <span className="tdot" /><span>{t.title}{t.sub ? <div className="tsub">{t.sub}</div> : null}</span>
+        <div className="tgroups">
+          {!connected && !hasZoho && <div className="demo-note">Demo tasks — connect an account for your real tasks.</div>}
+          {groups.map((g) => (
+            <div key={g.id} className="tgroup">
+              <div className="tgroup-head">{g.account}</div>
+              {g.lists.map((l) => {
+                const key = g.id + '/' + l.id; const col = collapsed[key]
+                return (
+                  <div key={l.id}>
+                    <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l)}>
+                      <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !col })}>{col ? '▸' : '▾'}</button>
+                      <span className="tlist-title">{l.title}</span><span className="tlist-count">{l.tasks.length}</span>
                     </div>
-                  ))}
-                </div>
-              )
-            })}
-          </div>
-        ))}
+                    {!col && l.tasks.map((t) => (
+                      <div key={t.id} className="titem" draggable onDragStart={(e) => dragTask(e, t, g, l)}>
+                        <span className="tdot" /><span>{t.title}{t.sub ? <div className="tsub">{t.sub}</div> : null}</span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+          ))}
+          {(connected || hasZoho) && groups.every((g) => g.lists.every((l) => !l.tasks.length)) && (
+            <div className="muted" style={{ padding: '8px' }}>No open tasks{taskSearch ? ' match your search' : ''}.</div>
+          )}
+        </div>
       </div>
 
       <div className="sidebar-foot">
-        <button className="btn" style={{ width: '100%', justifyContent: 'center' }} onClick={onOpenConnections}>
-          Connections{connections.length ? ` · ${connections.length}` : ''}
+        <button className="btn conn-btn" onClick={onOpenConnections}>
+          <span className="gear">⚙</span> Connections{connections.length ? <span className="conn-count">{connections.length}</span> : ''}
         </button>
-        <div style={{ marginTop: 10 }}>
-          {remState === 'granted'
-            ? <div className="muted">Reminders on — only while a tab is open.</div>
-            : <button className="link" onClick={onEnableReminders} disabled={remState === 'unsupported'}>Enable reminders</button>}
-        </div>
+        {remState !== 'granted' && <button className="link" style={{ marginTop: 8 }} onClick={onEnableReminders} disabled={remState === 'unsupported'}>Enable reminders</button>}
       </div>
     </aside>
   )
 }
 
 /* ---- Modals ---- */
+function ProviderGlyph({ provider }) {
+  if (provider === 'zoho') return <span className="pglyph zoho">Z</span>
+  return <span className="pglyph google">G</span>
+}
+
 function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar, onClose }) {
+  const [feats, setFeats] = useState({ calendar: true, tasks: true })
+  const googleHref = `/api/google/start?feats=${[feats.calendar && 'calendar', feats.tasks && 'tasks'].filter(Boolean).join(',') || 'tasks'}`
+  const calsFor = (connId) => calAccounts.find((a) => a.connId === connId)?.calendars || []
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">Connections</div>
-        {connections.length === 0 && <div className="muted">No accounts connected yet.</div>}
-        {connections.map((c) => (
-          <div key={c.id} className="conn-row">
-            <span className="conn-name">{c.account_label || c.provider}</span>
-            {c.provider === 'google' && c.extra?.features && !c.extra.features.includes('calendar') && <span className="conn-badge">tasks</span>}
-            <button className="row-x" onClick={() => onDisconnect(c.id)}>×</button>
-          </div>
-        ))}
-        <a className="btn-connect" href="/api/google/start">＋ Google (calendar + tasks)</a>
-        <a className="btn-connect" href="/api/google/start?mode=tasks">＋ Google (tasks only)</a>
-        <a className="btn-connect" href="/api/zoho/start">＋ Connect Zoho</a>
-        {calAccounts.length > 0 && (
-          <div>
-            <div className="field-label" style={{ marginTop: 6 }}>Calendars shown</div>
-            {calAccounts.map((a) => (
-              <div key={a.connId} className="cal-group">
-                <div className="muted">{a.email}</div>
-                {a.calendars.map((c) => { const key = `${a.connId}::${c.id}`; return (
-                  <label key={c.id} className="cal-row"><input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} /><span className="swatch" style={{ background: c.color || '#888' }} />{c.summary}</label>
-                ) })}
+      <div className="modal conn-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="conn-modal-head">
+          <div className="modal-title">Connections</div>
+          <button className="icon-btn" onClick={onClose}>×</button>
+        </div>
+
+        <div className="conn-body">
+          {connections.length === 0 && <div className="muted" style={{ padding: '4px 2px 12px' }}>No accounts connected yet. Add one below.</div>}
+
+          {connections.map((c) => {
+            const feats = c.extra?.features || ['calendar', 'tasks']
+            const cals = c.provider === 'google' && feats.includes('calendar') ? calsFor(c.id) : []
+            return (
+              <div key={c.id} className="conn-card">
+                <div className="conn-card-head">
+                  <ProviderGlyph provider={c.provider} />
+                  <div className="conn-card-id">
+                    <div className="conn-card-email">{c.account_label || c.provider}</div>
+                    <div className="conn-card-badges">
+                      {c.provider === 'google'
+                        ? feats.map((f) => <span key={f} className="conn-badge">{f}</span>)
+                        : <span className="conn-badge">deals · leads · projects</span>}
+                    </div>
+                  </div>
+                  <button className="link danger" onClick={() => onDisconnect(c.id)}>Disconnect</button>
+                </div>
+                {cals.length > 0 && (
+                  <div className="conn-cals">
+                    <div className="field-label">Calendars shown</div>
+                    {cals.map((cal) => { const key = `${c.id}::${cal.id}`; return (
+                      <label key={cal.id} className="cal-row">
+                        <input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} />
+                        <span className="swatch" style={{ background: cal.color || '#888' }} />{cal.summary}
+                      </label>
+                    ) })}
+                  </div>
+                )}
               </div>
-            ))}
+            )
+          })}
+
+          <div className="conn-add">
+            <div className="conn-card add">
+              <div className="conn-card-head"><ProviderGlyph provider="google" /><div className="conn-card-id"><div className="conn-card-email">Add a Google account</div><div className="muted" style={{ fontSize: 12 }}>Choose what to sync</div></div></div>
+              <div className="conn-featrow">
+                <label className="chk"><input type="checkbox" checked={feats.calendar} onChange={(e) => setFeats({ ...feats, calendar: e.target.checked })} /> Calendar</label>
+                <label className="chk"><input type="checkbox" checked={feats.tasks} onChange={(e) => setFeats({ ...feats, tasks: e.target.checked })} /> Tasks</label>
+              </div>
+              <a className={'btn primary' + (!feats.calendar && !feats.tasks ? ' disabled' : '')} href={googleHref}
+                onClick={(e) => { if (!feats.calendar && !feats.tasks) e.preventDefault() }}>Connect Google</a>
+            </div>
+            <div className="conn-card add">
+              <div className="conn-card-head"><ProviderGlyph provider="zoho" /><div className="conn-card-id"><div className="conn-card-email">Add Zoho</div><div className="muted" style={{ fontSize: 12 }}>Deals, leads & projects</div></div></div>
+              <a className="btn primary" href="/api/zoho/start">Connect Zoho</a>
+            </div>
           </div>
-        )}
-        <div className="modal-actions"><div className="spacer" /><button className="btn" onClick={onClose}>Done</button></div>
+        </div>
       </div>
     </div>
   )

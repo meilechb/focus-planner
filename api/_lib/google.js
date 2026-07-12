@@ -13,23 +13,25 @@ const BASE_SCOPES = ['openid', 'email', 'profile']
 const CAL_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
 const TASKS_SCOPE = 'https://www.googleapis.com/auth/tasks'
 
-// mode: 'all' = calendar + tasks, 'tasks' = tasks only (e.g. a personal account).
-export function scopesFor(mode) {
-  const s = [...BASE_SCOPES, TASKS_SCOPE]
-  if (mode !== 'tasks') s.unshift(CAL_SCOPE)
+// feats: array of 'calendar' and/or 'tasks'. One connector, you pick what it syncs.
+export function parseFeats(str) {
+  const f = (str || 'calendar,tasks').split(',').map((s) => s.trim()).filter((x) => x === 'calendar' || x === 'tasks')
+  return f.length ? f : ['calendar', 'tasks']
+}
+
+export function scopesFor(feats) {
+  const s = [...BASE_SCOPES]
+  if (feats.includes('calendar')) s.push(CAL_SCOPE)
+  if (feats.includes('tasks')) s.push(TASKS_SCOPE)
   return s
 }
 
-export function featuresFor(mode) {
-  return mode === 'tasks' ? ['tasks'] : ['calendar', 'tasks']
-}
-
-export function buildAuthUrl({ clientId, redirectUri, state, mode = 'all' }) {
+export function buildAuthUrl({ clientId, redirectUri, state, feats = ['calendar', 'tasks'] }) {
   const p = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: scopesFor(mode).join(' '),
+    scope: scopesFor(feats).join(' '),
     access_type: 'offline',
     // select_account lets you pick/add a different account each time (multi-account);
     // consent guarantees a refresh token.
