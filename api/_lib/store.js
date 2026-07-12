@@ -1,13 +1,16 @@
 // Storage + auth + secret-at-rest for Focus Planner.
 //
-// The entire app is a single JSON document in a PRIVATE Vercel Blob store.
-// Refresh tokens inside it are encrypted at rest with AES-256-GCM. Session
-// cookies are signed HMACs carrying a server-checked expiry. Writes use
-// optimistic concurrency (ETag ifMatch) with a bounded retry so overlapping
-// invocations cannot silently clobber each other.
+// The entire app is a single JSON document in a Vercel Blob store (standard
+// "public" access — private access returned 400 on this store, and it works on
+// every plan). The blob's URL is not exposed by any endpoint, and refresh
+// tokens inside the doc are still encrypted at rest with AES-256-GCM, so a
+// leaked blob yields no usable secrets. Reads bypass the CDN cache (unique
+// query param) for read-after-write freshness. Writes use optimistic
+// concurrency (ETag ifMatch) with a bounded retry so overlapping invocations
+// cannot silently clobber each other.
 
 import crypto from 'node:crypto'
-import { get, put, BlobPreconditionFailedError } from '@vercel/blob'
+import { head, put, BlobNotFoundError, BlobPreconditionFailedError } from '@vercel/blob'
 
 const BLOB_PATH = 'focus/data.json'
 const WRITE_RETRIES = 4
@@ -68,13 +71,21 @@ export function decryptSecret(value) {
 // ---------------------------------------------------------------------------
 
 async function readDoc() {
-  const res = await get(BLOB_PATH, { access: 'private', useCache: false }).catch((e) => {
-    // Treat "not found" as an empty doc; rethrow anything else.
-    if (e && (e.name === 'BlobNotFoundError' || /not.?found/i.test(e.message || ''))) return null
+  let meta
+  try {
+    meta = await head(BLOB_PATH)
+  } catch (e) {
+    // First run: the doc doesn't exist yet.
+    if (e instanceof BlobNotFoundError || /not.?found/i.test(e?.message || '')) {
+      return { doc: emptyDoc(), etag: null }
+    }
     throw e
-  })
-  if (!res || res.statusCode !== 200) return { doc: emptyDoc(), etag: null }
-  const text = await new Response(res.stream).text()
+  }
+  // Fetch the content fresh, bypassing the CDN cache with a unique query param.
+  const res = await fetch(`${meta.url}?ts=${Date.now()}`, { cache: 'no-store' })
+  if (res.status === 404) return { doc: emptyDoc(), etag: null }
+  if (!res.ok) throw new Error(`blob read failed: ${res.status}`)
+  const text = await res.text()
   let doc
   try {
     doc = JSON.parse(text)
@@ -83,12 +94,12 @@ async function readDoc() {
   }
   if (!doc.state) doc.state = { ...DEFAULT_STATE }
   if (!Array.isArray(doc.connections)) doc.connections = []
-  return { doc, etag: res.blob?.etag ?? null }
+  return { doc, etag: meta.etag ?? null }
 }
 
 async function writeDoc(doc, etag) {
   await put(BLOB_PATH, JSON.stringify(doc), {
-    access: 'private',
+    access: 'public',
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: 'application/json',
