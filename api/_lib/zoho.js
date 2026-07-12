@@ -91,34 +91,75 @@ async function crmGet(apiDomain, accessToken, module, fields) {
 }
 
 // A deal/lead is "closed" if its stage/status reads as won, lost, closed,
-// dead, cancelled, junk or converted — those never show.
+// dead, cancelled, junk or converted. Used only to pick sensible DEFAULTS —
+// the user can override which stages/values show in the Customize panel.
 const CLOSED_DEAL = /clos|won|lost|dead|cancel|junk|complet/i
 const CLOSED_LEAD = /lost|junk|convert|dead|not\s*qualif/i
 
-export async function listOpenDeals(apiDomain, accessToken) {
-  const rows = await crmGet(apiDomain, accessToken, 'Deals', 'Deal_Name,Stage,Amount,Account_Name,Owner')
-  return rows
-    .filter((r) => !CLOSED_DEAL.test(r.Stage || ''))
-    .map((r) => ({
-      id: String(r.id),
-      title: r.Deal_Name || 'Deal',
-      sub: [r.Account_Name?.name, r.Stage, r.Amount ? `$${r.Amount}` : ''].filter(Boolean).join(' · '),
-      status: r.Stage || 'Unknown', // deal stage — the panel filters on this
-      owner: r.Owner?.name || null,
-    }))
+// Read one CRM field value to a plain string (lookups -> name, multiselect -> joined).
+function fieldVal(v) {
+  if (v == null) return null
+  if (Array.isArray(v)) return v.map(fieldVal).filter(Boolean).join(', ') || null
+  if (typeof v === 'object') return v.name || v.display_value || null
+  return String(v)
 }
 
-export async function listOpenLeads(apiDomain, accessToken) {
-  const rows = await crmGet(apiDomain, accessToken, 'Leads', 'Full_Name,Last_Name,Company,Lead_Status,Owner')
-  return rows
-    .filter((r) => !CLOSED_LEAD.test(r.Lead_Status || ''))
-    .map((r) => ({
+// Filterable fields for a module: every picklist field, plus Owner. Each has a
+// list of possible values so the panel can offer them even when no record uses
+// them yet. Returns [] if the metadata call fails (panel falls back to data).
+export async function listCrmFields(apiDomain, accessToken, module) {
+  try {
+    const url = `${apiDomain}/crm/v8/settings/fields?module=${module}&type=all`
+    const res = await fetch(url, { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } })
+    if (!res.ok) return []
+    const data = await res.json().catch(() => ({}))
+    const out = []
+    for (const f of data.fields || []) {
+      if (f.api_name === 'Owner') { out.push({ api_name: 'Owner', label: 'Owner', values: [] }); continue }
+      if ((f.data_type === 'picklist' || f.data_type === 'multiselectpicklist') && Array.isArray(f.pick_list_values)) {
+        out.push({ api_name: f.api_name, label: f.field_label || f.api_name, values: f.pick_list_values.map((v) => v.display_value).filter(Boolean) })
+      }
+    }
+    return out.slice(0, 25)
+  } catch { return [] }
+}
+
+// Fetch records with every requested field, tagging each with a { fields } map
+// and an `open` default flag. No hard server-side filter — the panel decides.
+async function listCrmRecords(apiDomain, accessToken, module, titleOf, subOf, closedRe, fieldNames) {
+  const base = module === 'Deals' ? ['Deal_Name', 'Stage', 'Amount', 'Account_Name'] : ['Full_Name', 'Last_Name', 'Company', 'Lead_Status']
+  const all = [...new Set([...base, 'Owner', ...fieldNames])].slice(0, 50).join(',')
+  const rows = await crmGet(apiDomain, accessToken, module, all)
+  const statusField = module === 'Deals' ? 'Stage' : 'Lead_Status'
+  return rows.map((r) => {
+    const fields = {}
+    for (const n of new Set(['Owner', statusField, ...fieldNames])) fields[n] = fieldVal(r[n])
+    return {
       id: String(r.id),
-      title: r.Full_Name || r.Last_Name || 'Lead',
-      sub: [r.Company, r.Lead_Status].filter(Boolean).join(' · '),
-      status: r.Lead_Status || 'Unknown', // lead status — the panel filters on this
-      owner: r.Owner?.name || null,
-    }))
+      title: titleOf(r),
+      sub: subOf(r),
+      open: !closedRe.test(r[statusField] || ''),
+      fields,
+    }
+  })
+}
+
+export async function listOpenDeals(apiDomain, accessToken, fieldNames = []) {
+  return listCrmRecords(
+    apiDomain, accessToken, 'Deals',
+    (r) => r.Deal_Name || 'Deal',
+    (r) => [r.Account_Name?.name, r.Stage, r.Amount ? `$${r.Amount}` : ''].filter(Boolean).join(' · '),
+    CLOSED_DEAL, fieldNames,
+  )
+}
+
+export async function listOpenLeads(apiDomain, accessToken, fieldNames = []) {
+  return listCrmRecords(
+    apiDomain, accessToken, 'Leads',
+    (r) => r.Full_Name || r.Last_Name || 'Lead',
+    (r) => [r.Company, r.Lead_Status].filter(Boolean).join(' · '),
+    CLOSED_LEAD, fieldNames,
+  )
 }
 
 // --- Projects (portals -> projects -> tasks) --------------------------------

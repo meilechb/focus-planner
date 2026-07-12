@@ -24,7 +24,7 @@ const SEEN_KEY = 'focus_seen_accounts'
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
 function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
 const NAVCFG_KEY = 'focus_navcfg'
-const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, dealStatuses: null, leadStatuses: null, zohoAssignee: 'mine' }
+const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, dealFilter: null, leadFilter: null, zohoAssignee: 'mine' }
 function readNavCfg() { try { return { ...DEFAULT_NAVCFG, ...JSON.parse(localStorage.getItem(NAVCFG_KEY) || '{}') } } catch { return { ...DEFAULT_NAVCFG } } }
 const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 const timeToMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m }
@@ -169,7 +169,10 @@ export default function Planner() {
       // Normalize into the exact shape the UI expects, so a partial/error
       // response can never crash the planner on the next render.
       setZoho({
-        crm: { deals: r?.crm?.deals || [], leads: r?.crm?.leads || [] },
+        crm: {
+          deals: r?.crm?.deals || [], leads: r?.crm?.leads || [],
+          dealFields: r?.crm?.dealFields || [], leadFields: r?.crm?.leadFields || [],
+        },
         projects: Array.isArray(r?.projects) ? r.projects : [],
         errors: r?.errors || [],
       })
@@ -383,9 +386,9 @@ export default function Planner() {
       const leads = zoho.crm?.leads || []
       const zprojects = zoho.projects || []
       const crmLists = []
-      if (deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', stage: d.status, owner: d.owner, source: 'zoho' })).filter(searchOk) })
-      if (leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', stage: d.status, owner: d.owner, source: 'zoho' })).filter(searchOk) })
-      if (crmLists.length) groups.push({ id: 'zoho-crm', account: 'Zoho CRM', lists: crmLists })
+      if (deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, source: 'zoho' })).filter(searchOk) })
+      if (leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, source: 'zoho' })).filter(searchOk) })
+      if (crmLists.length) groups.push({ id: 'zoho-crm', account: 'Zoho CRM', lists: crmLists, dealFields: zoho.crm?.dealFields || [], leadFields: zoho.crm?.leadFields || [] })
       if (zprojects.length) groups.push({ id: 'zoho-projects', account: 'Zoho Projects', lists: zprojects.map((p) => ({ id: p.id, title: p.name, tasks: (p.tasks || []).map((t) => ({ ...t, source: 'zoho' })).filter(searchOk) })) })
     }
     return groups
@@ -797,11 +800,14 @@ function Sidebar(props) {
     if (g.id === 'zoho-crm') return l.id === 'deals' ? mods.deals !== false : mods.leads !== false
     return true
   }
-  // Per-list task filter: CRM status selection + Zoho Projects assignee.
+  // CRM filter: no field chosen -> show open records (default); a chosen field ->
+  // show only records whose value for that field is in the selected set.
+  const crmFilter = (t, cfg) => (!cfg || !cfg.field ? t.open !== false : (cfg.values || []).includes(t.fields?.[cfg.field]))
+  // Per-list task filter: CRM field selection + Zoho Projects assignee.
   const listTasks = (g, l) => {
     let ts = l.tasks
-    if (g.id === 'zoho-crm' && l.id === 'deals' && Array.isArray(navCfg.dealStatuses)) ts = ts.filter((t) => navCfg.dealStatuses.includes(t.stage))
-    if (g.id === 'zoho-crm' && l.id === 'leads' && Array.isArray(navCfg.leadStatuses)) ts = ts.filter((t) => navCfg.leadStatuses.includes(t.stage))
+    if (g.id === 'zoho-crm' && l.id === 'deals') ts = ts.filter((t) => crmFilter(t, navCfg.dealFilter))
+    if (g.id === 'zoho-crm' && l.id === 'leads') ts = ts.filter((t) => crmFilter(t, navCfg.leadFilter))
     if (g.id === 'zoho-projects' && navCfg.zohoAssignee !== 'all') ts = ts.filter((t) => t.mine !== false)
     return ts
   }
@@ -1087,28 +1093,69 @@ function ShortcutsModal({ onClose }) {
   )
 }
 
-// The "Customize nav bar" panel: choose modules, deal/lead statuses, assignees.
+// The "Customize nav bar" panel: choose modules, then for Deals/Leads pick which
+// field to filter by and which of its values to show, plus the Projects assignee.
 function CustomizeModal({ navCfg, onChange, groups, connected, hasZoho, onClose }) {
   const crm = groups.find((g) => g.id === 'zoho-crm')
-  const hasDeals = !!crm?.lists.find((l) => l.id === 'deals')
-  const hasLeads = !!crm?.lists.find((l) => l.id === 'leads')
+  const dealsList = crm?.lists.find((l) => l.id === 'deals')
+  const leadsList = crm?.lists.find((l) => l.id === 'leads')
+  const hasDeals = !!dealsList
+  const hasLeads = !!leadsList
   const hasProjects = groups.some((g) => g.id === 'zoho-projects')
-  const dealStatuses = [...new Set((crm?.lists.find((l) => l.id === 'deals')?.tasks || []).map((t) => t.stage).filter(Boolean))].sort()
-  const leadStatuses = [...new Set((crm?.lists.find((l) => l.id === 'leads')?.tasks || []).map((t) => t.stage).filter(Boolean))].sort()
+
+  // Field options come from Zoho's field metadata; fall back to the status field
+  // derived from the records if metadata is unavailable. Values combine the
+  // field's picklist with any values actually present in the data.
+  const fieldOptions = (metaFields, list, fallbackField, fallbackLabel) => {
+    const meta = (metaFields || []).length ? metaFields : [{ api_name: fallbackField, label: fallbackLabel, values: [] }]
+    const tasks = list?.tasks || []
+    return meta.map((f) => {
+      const present = [...new Set(tasks.map((t) => t.fields?.[f.api_name]).filter(Boolean))]
+      const values = [...new Set([...(f.values || []), ...present])]
+      return { api_name: f.api_name, label: f.label, values }
+    }).filter((f) => f.values.length)
+  }
+  const dealFields = fieldOptions(crm?.dealFields, dealsList, 'Stage', 'Stage')
+  const leadFields = fieldOptions(crm?.leadFields, leadsList, 'Lead_Status', 'Lead Status')
 
   const mods = navCfg.modules || {}
   const setMod = (k, v) => onChange({ ...navCfg, modules: { ...mods, [k]: v } })
-  // status list == null means "all"; toggling builds an explicit allow-list.
-  const toggleStatus = (field, all, s) => {
-    const cur = Array.isArray(navCfg[field]) ? navCfg[field] : all
-    const next = cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]
-    onChange({ ...navCfg, [field]: next.length === all.length ? null : next })
+  // filterKey: 'dealFilter' | 'leadFilter'. cfg = { field, values } | null (= open only).
+  const setField = (filterKey, opts, apiName) => {
+    if (!apiName) return onChange({ ...navCfg, [filterKey]: null })
+    const values = opts.find((f) => f.api_name === apiName)?.values || []
+    onChange({ ...navCfg, [filterKey]: { field: apiName, values } })
   }
-  const statusOn = (field, all, s) => (Array.isArray(navCfg[field]) ? navCfg[field].includes(s) : true)
+  const toggleValue = (filterKey, v) => {
+    const cfg = navCfg[filterKey]; if (!cfg) return
+    const values = cfg.values.includes(v) ? cfg.values.filter((x) => x !== v) : [...cfg.values, v]
+    onChange({ ...navCfg, [filterKey]: { ...cfg, values } })
+  }
 
   const Toggle = ({ on, onClick }) => (
     <button className={'switch' + (on ? ' on' : '')} onClick={onClick} aria-pressed={on}><span className="knob" /></button>
   )
+  const CrmFilter = ({ label, filterKey, opts }) => {
+    const cfg = navCfg[filterKey]
+    const active = opts.find((f) => f.api_name === cfg?.field)
+    return (
+      <div className="cz-sec">
+        <div className="cz-sec-title">{label}</div>
+        <div className="cz-field">
+          <span className="cz-field-lbl">Filter by</span>
+          <select className="cz-select" value={cfg?.field || ''} onChange={(e) => setField(filterKey, opts, e.target.value)}>
+            <option value="">Open only (default)</option>
+            {opts.map((f) => <option key={f.api_name} value={f.api_name}>{f.label}</option>)}
+          </select>
+        </div>
+        {active && (
+          <div className="cz-chips">{active.values.map((v) => (
+            <button key={v} className={'cz-chip' + (cfg.values.includes(v) ? ' on' : '')} onClick={() => toggleValue(filterKey, v)}>{v}</button>
+          ))}</div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1124,22 +1171,8 @@ function CustomizeModal({ navCfg, onChange, groups, connected, hasZoho, onClose 
             {!hasZoho && <div className="muted" style={{ fontSize: 12 }}>Connect Zoho to see CRM and Projects modules.</div>}
           </div>
 
-          {hasDeals && mods.deals !== false && dealStatuses.length > 0 && (
-            <div className="cz-sec">
-              <div className="cz-sec-title">Deal stages to show</div>
-              <div className="cz-chips">{dealStatuses.map((s) => (
-                <button key={s} className={'cz-chip' + (statusOn('dealStatuses', dealStatuses, s) ? ' on' : '')} onClick={() => toggleStatus('dealStatuses', dealStatuses, s)}>{s}</button>
-              ))}</div>
-            </div>
-          )}
-          {hasLeads && mods.leads !== false && leadStatuses.length > 0 && (
-            <div className="cz-sec">
-              <div className="cz-sec-title">Lead statuses to show</div>
-              <div className="cz-chips">{leadStatuses.map((s) => (
-                <button key={s} className={'cz-chip' + (statusOn('leadStatuses', leadStatuses, s) ? ' on' : '')} onClick={() => toggleStatus('leadStatuses', leadStatuses, s)}>{s}</button>
-              ))}</div>
-            </div>
-          )}
+          {hasDeals && mods.deals !== false && dealFields.length > 0 && <CrmFilter label="Deals" filterKey="dealFilter" opts={dealFields} />}
+          {hasLeads && mods.leads !== false && leadFields.length > 0 && <CrmFilter label="Leads" filterKey="leadFilter" opts={leadFields} />}
           {hasProjects && mods.projects !== false && (
             <div className="cz-sec">
               <div className="cz-sec-title">Zoho Projects tasks</div>

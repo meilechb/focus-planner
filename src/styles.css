@@ -403,6 +403,10 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .switch.on { background: var(--accent); }
 .switch .knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .16s; }
 .switch.on .knob { transform: translateX(16px); }
+.cz-field { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
+.cz-field-lbl { font-size: 13px; color: var(--muted); flex: none; }
+.cz-select { flex: 1; min-width: 0; font: inherit; font-size: 13.5px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 7px 10px; cursor: pointer; }
+.cz-select:focus { outline: none; border-color: var(--accent); }
 .cz-chips { display: flex; flex-wrap: wrap; gap: 7px; }
 .cz-chip { font-size: 12px; font-weight: 550; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); transition: all var(--t); }
 .cz-chip:hover { border-color: var(--accent); color: var(--accent); }

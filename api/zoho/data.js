@@ -2,7 +2,7 @@
 //   { crm: { deals[], leads[] }, projects: [{ id, name, tasks[] }], errors[] }
 import { requireUser, listConnections, getConnection } from '../_lib/store.js'
 import {
-  refreshAccessToken, getProfile, listOpenDeals, listOpenLeads, listPortals, listProjects, listProjectTasks, listMyTaskIds,
+  refreshAccessToken, getProfile, listCrmFields, listOpenDeals, listOpenLeads, listPortals, listProjects, listProjectTasks, listMyTaskIds,
 } from '../_lib/zoho.js'
 
 const clientId = () => process.env.ZOHO_CLIENT_ID
@@ -17,7 +17,7 @@ export default async function handler(req, res) {
     }
 
     const zohoConns = (await listConnections()).filter((c) => c.provider === 'zoho')
-    const crm = { deals: [], leads: [] }
+    const crm = { deals: [], leads: [], dealFields: [], leadFields: [] }
     const projects = []
     const errors = []
 
@@ -39,9 +39,14 @@ export default async function handler(req, res) {
 
       const profile = await getProfile(accessToken) // { email, name } for ownership matching
 
-      // CRM — deals & leads (each source isolated so one failure doesn't sink the rest)
-      try { crm.deals.push(...(await listOpenDeals(apiDomain, accessToken))) } catch (e) { errors.push(`deals: ${e.message || e}`) }
-      try { crm.leads.push(...(await listOpenLeads(apiDomain, accessToken))) } catch (e) { errors.push(`leads: ${e.message || e}`) }
+      // CRM — deals & leads (each source isolated so one failure doesn't sink the rest).
+      // Field metadata drives the "choose a field to filter by" panel; records carry
+      // every filterable field so the client can filter by any of them.
+      let dealFields = [], leadFields = []
+      try { dealFields = await listCrmFields(apiDomain, accessToken, 'Deals'); crm.dealFields = dealFields } catch {}
+      try { leadFields = await listCrmFields(apiDomain, accessToken, 'Leads'); crm.leadFields = leadFields } catch {}
+      try { crm.deals.push(...(await listOpenDeals(apiDomain, accessToken, dealFields.map((f) => f.api_name)))) } catch (e) { errors.push(`deals: ${e.message || e}`) }
+      try { crm.leads.push(...(await listOpenLeads(apiDomain, accessToken, leadFields.map((f) => f.api_name)))) } catch (e) { errors.push(`leads: ${e.message || e}`) }
 
       // Projects — portals -> projects -> tasks
       try {
