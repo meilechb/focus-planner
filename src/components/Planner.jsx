@@ -49,6 +49,7 @@ export default function Planner() {
   const [editProject, setEditProject] = useState(null)
   const [editBlock, setEditBlock] = useState(null) // { block, day }
   const [showConn, setShowConn] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
 
   const today = isoDate(new Date(), tz)
   const connected = connections.some((c) => c.provider === 'google')
@@ -231,6 +232,8 @@ export default function Planner() {
       else if (k === 'd') setView('day')
       else if (k === 'w') setView('week')
       else if (k === 'm') setView('month')
+      else if (k === '?' || (e.key === '/' && e.shiftKey)) setShowHelp((v) => !v)
+      else if (e.key === 'Escape') setShowHelp(false)
       else if (e.key === 'ArrowLeft') setViewDate((v) => addDays(v, -stepFor()))
       else if (e.key === 'ArrowRight') setViewDate((v) => addDays(v, stepFor()))
       else return
@@ -463,6 +466,7 @@ export default function Planner() {
           calAccounts={calAccounts} selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
           onClose={() => setShowConn(false)} />
       )}
+      {showHelp && <ShortcutsModal onClose={() => setShowHelp(false)} />}
     </div>
   )
 }
@@ -962,6 +966,29 @@ function ProjectModal({ project, onSave, onClose, onDelete }) {
           {!p.isNew && <button className="link danger" onClick={() => { onDelete(p.id); onClose() }}>Delete</button>}
           <div className="spacer" /><button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" onClick={save} disabled={!p.name.trim()}>{p.isNew ? 'Create' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ShortcutsModal({ onClose }) {
+  const rows = [
+    ['T', 'Jump to today'],
+    ['D / W / M', 'Day / Week / Month view'],
+    ['← / →', 'Previous / next'],
+    ['⌘Z / Ctrl+Z', 'Undo block change'],
+    ['Double-click', 'Create a block'],
+    ['?', 'Toggle this help'],
+  ]
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 380 }}>
+        <div className="modal-head"><div className="modal-title">Keyboard shortcuts</div><button className="icon-btn" onClick={onClose}><Icon name="x" size={18} /></button></div>
+        <div className="shortcut-list">
+          {rows.map(([k, d]) => (
+            <div key={k} className="shortcut-row"><span className="shortcut-desc">{d}</span><kbd className="kbd">{k}</kbd></div>
+          ))}
         </div>
       </div>
     </div>
