@@ -45,6 +45,7 @@ export default function Planner() {
   const [sidebarOpen, setSidebarOpen] = useState(() => readCache().sidebarOpen !== false)
   const [focusHidden, setFocusHidden] = useState(() => { const c = readCache(); return c.focusHidden === undefined ? true : !!c.focusHidden })
   const [overrideBlockId, setOverrideBlockId] = useState(null)
+  const [refreshNonce, setRefreshNonce] = useState(0)
   const [editProject, setEditProject] = useState(null)
   const [editBlock, setEditBlock] = useState(null) // { block, day }
   const [showConn, setShowConn] = useState(false)
@@ -177,7 +178,7 @@ export default function Planner() {
       .catch(() => {}) // keep cached events on transient error
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, selectedCalendars, range.start, range.end])
+  }, [connected, selectedCalendars, range.start, range.end, refreshNonce])
 
   useEffect(() => {
     if (!connected || !selectedCalendars.length) return
@@ -198,9 +199,22 @@ export default function Planner() {
       .then((r) => { if (alive) setGtasks(r.tasks || []) })
       .catch(() => {}) // keep cached tasks on transient error (don't zero the sidebar)
     return () => { alive = false }
-  }, [connected, selectedTaskLists])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, selectedTaskLists, refreshNonce])
 
   useEffect(() => { const id = setInterval(() => setNow(nowMinutes(tz)), 30000); setNow(nowMinutes(tz)); return () => clearInterval(id) }, [tz])
+
+  // Refresh calendar + tasks when the tab regains focus (throttled to 45s) and
+  // every 5 minutes while open, so data never goes stale behind the user.
+  useEffect(() => {
+    let last = 0
+    const bump = () => { const t = Date.now(); if (t - last < 45000) return; last = t; setRefreshNonce((n) => n + 1) }
+    const onVis = () => { if (document.visibilityState === 'visible') bump() }
+    window.addEventListener('focus', bump)
+    document.addEventListener('visibilitychange', onVis)
+    const id = setInterval(bump, 300000)
+    return () => { window.removeEventListener('focus', bump); document.removeEventListener('visibilitychange', onVis); clearInterval(id) }
+  }, [])
 
   // keyboard shortcuts: T=today, D/W/M=views, ←/→=navigate
   useEffect(() => {
@@ -301,11 +315,20 @@ export default function Planner() {
     const q = taskSearch.trim().toLowerCase()
     const dueOk = (t) => taskFilter === 'all' || (t.due && localDateISO(t.due, tz) === viewDate)
     const searchOk = (t) => !q || (t.title || '').toLowerCase().includes(q) || (t.sub || '').toLowerCase().includes(q)
+    // Overdue/soonest first, then undated, then alphabetical.
+    const byDue = (a, b) => {
+      const da = a.due ? localDateISO(a.due, tz) : ''
+      const db = b.due ? localDateISO(b.due, tz) : ''
+      if (da && db && da !== db) return da < db ? -1 : 1
+      if (da && !db) return -1
+      if (!da && db) return 1
+      return (a.title || '').localeCompare(b.title || '')
+    }
     const groups = []
     if (connected) {
       for (const a of taskAccounts) groups.push({
         id: a.connId, account: a.email || 'Google',
-        lists: a.lists.map((l) => ({ id: l.id, title: l.title, tasks: gtasks.filter((t) => t.connId === a.connId && t.listId === l.id).filter(dueOk).filter(searchOk).map((t) => ({ ...t, source: 'google' })) })),
+        lists: a.lists.map((l) => ({ id: l.id, title: l.title, tasks: gtasks.filter((t) => t.connId === a.connId && t.listId === l.id).filter(dueOk).filter(searchOk).map((t) => ({ ...t, source: 'google' })).sort(byDue) })),
       })
     }
     if (hasZoho) {
@@ -375,6 +398,7 @@ export default function Planner() {
         collapsed={collapsed} setCollapsed={setCollapsed} sections={sections} setSections={setSections}
         connections={connections} onOpenConnections={() => setShowConn(true)}
         remState={remState} onEnableReminders={enableReminders}
+        tz={tz} today={today}
       />
 
       <main className="main">
@@ -661,8 +685,22 @@ function Sidebar(props) {
   const {
     projects, onNewProject, onEditProject, onDeleteProject, favorites, isFav, toggleFav, connected, hasZoho, groups,
     taskFilter, setTaskFilter, taskSearch, setTaskSearch, collapsed, setCollapsed, sections, setSections,
-    connections, onOpenConnections, remState, onEnableReminders,
+    connections, onOpenConnections, remState, onEnableReminders, tz, today,
   } = props
+  function dueBadge(due) {
+    if (!due) return null
+    const iso = localDateISO(due, tz)
+    if (!iso) return null
+    const overdue = iso < today
+    const isToday = iso === today
+    if (!overdue && !isToday && iso > today) {
+      const d = new Date(iso + 'T12:00:00')
+      const soon = (new Date(d) - new Date(today + 'T12:00:00')) / 86400000 <= 7
+      if (!soon) return null
+      return <span className="due-badge">{d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+    }
+    return <span className={'due-badge' + (overdue ? ' overdue' : ' today')}>{overdue ? 'Overdue' : 'Today'}</span>
+  }
   function chip(e, text, color) {
     const el = document.createElement('div')
     el.className = 'drag-chip'
@@ -758,6 +796,7 @@ function Sidebar(props) {
                         <div key={t.id} className="titem" draggable onDragStart={(e) => dragTask(e, t, g, l)}>
                           <span className="tdot" />
                           <span className="titem-body">{t.title}{t.sub ? <div className="tsub">{t.sub}</div> : null}</span>
+                          {dueBadge(t.due)}
                           <button className={'star' + (isFav(tid) ? ' on' : '')} title="Favorite" onClick={(e) => { e.stopPropagation(); toggleFav(taskEntry(t, g, l)) }}><Icon name="star" size={14} filled={isFav(tid)} /></button>
                         </div>
                       )
