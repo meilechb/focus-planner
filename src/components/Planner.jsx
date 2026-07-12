@@ -3,7 +3,7 @@ import { api } from '../lib/api.js'
 import {
   PALETTE, DAY_START, DAY_END, SNAP_MIN, ACCENT,
   isoDate, addDays, startOfWeek, weekDays, monthGridDays, monthOf, dayNum,
-  label, labelShort, snap, clamp, uuid, buffersFrom, computeFocus, nowMinutes, localDateISO,
+  label, labelShort, hourLabel, snap, clamp, uuid, buffersFrom, computeFocus, nowMinutes, localDateISO,
   fitDrop, clampMove, clampResizeBottom, clampResizeTop,
 } from '../lib/lib.js'
 import FocusCard from './FocusCard.jsx'
@@ -317,6 +317,7 @@ export default function Planner() {
       />
 
       <main className="main">
+        <div className="main-card">
         <TopBar
           view={view} setView={setView} viewDate={viewDate} setViewDate={setViewDate} today={today}
           zoom={zoom} setZoom={setZoom} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)}
@@ -353,6 +354,7 @@ export default function Planner() {
             onOpenDay={(d) => { setViewDate(d); setView('day') }}
           />
         )}
+        </div>
       </main>
 
       {!focusHidden && (
@@ -473,7 +475,7 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
         onDragLeave={(e) => { if (e.target === ref.current) setHint(null) }}
         onDrop={(e) => { e.preventDefault(); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(null); if (s) { try { onDropPayload(JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
         {hours.map((h) => (
-          <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom }}><span className="hour-label">{labelShort(h)}</span></div>
+          <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom }}><span className="hour-label">{hourLabel(h)}</span></div>
         ))}
         {hint && <div className={'drop-hint' + (hint.none ? ' invalid' : '')} style={{ top: (hint.start - DAY_START) * zoom, height: (hint.end - hint.start) * zoom }}>{hint.none ? 'No room' : `${label(hint.start)} – ${label(hint.end)}`}</div>}
         {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 8, right: 10 }}>Prep · {b.forTitle}</div>)}
@@ -530,7 +532,7 @@ function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsF
       </div>
       <div className="week-body" style={{ height }}>
         <div className="week-axis">
-          {hours.map((h) => <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom, left: 0, right: 'auto', width: 52, borderTop: 'none' }}><span className="hour-label">{labelShort(h)}</span></div>)}
+          {hours.map((h) => <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom, left: 0, right: 'auto', width: 52, borderTop: 'none' }}><span className="hour-label">{hourLabel(h)}</span></div>)}
         </div>
         <div className="week-cols">
           {days.map((d) => {

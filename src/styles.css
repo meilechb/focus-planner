@@ -77,7 +77,8 @@ input { font-family: inherit; }
    ============================================================ */
 .app { display: grid; grid-template-columns: 300px 1fr; grid-template-rows: minmax(0, 1fr); height: 100vh; overflow: hidden; background: var(--bg); }
 .app.sidebar-collapsed { grid-template-columns: 0 1fr; }
-.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); padding: 14px; }
+.main-card { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-sm); overflow: hidden; }
 
 /* ---- sidebar ---- */
 .sidebar { background: var(--panel); border-right: 1px solid var(--line); overflow: hidden; display: flex; flex-direction: column; }
@@ -166,7 +167,7 @@ input { font-family: inherit; }
 /* ============================================================
    Calendar — shared grid
    ============================================================ */
-.cal-scroll { flex: 1; overflow-y: auto; background: var(--bg); }
+.cal-scroll { flex: 1; overflow-y: auto; background: var(--panel); }
 .grid { position: relative; margin: 8px 16px 60px 60px; }
 .hour-row { position: absolute; left: -60px; right: 0; border-top: 1px solid #edeef1; }
 .hour-row.half { border-top: 1px dashed var(--line-2); }
@@ -194,7 +195,7 @@ input { font-family: inherit; }
 .now-dot { position: absolute; left: 0; top: -4px; width: 10px; height: 10px; border-radius: 50%; background: #ea4335; box-shadow: 0 0 0 3px rgba(234,67,53,.18); }
 
 /* week */
-.week { display: grid; grid-template-columns: 52px repeat(7, 1fr); background: var(--bg); }
+.week { display: grid; grid-template-columns: 52px repeat(7, 1fr); background: var(--panel); }
 .week-colhead { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 52px repeat(7, 1fr); grid-column: 1 / -1; }
 .wch { text-align: center; padding: 8px 0; border-left: 1px solid var(--line-2); }
 .wch .dow { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }

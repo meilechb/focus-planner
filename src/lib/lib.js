@@ -76,6 +76,15 @@ export function label(min) {
   return `${h}:${String(m).padStart(2, '0')} ${ampm}`
 }
 
+// Whole-hour axis label: "7 AM", "12 PM", "1 PM"
+export function hourLabel(min) {
+  const h24 = Math.floor(min / 60)
+  const ampm = h24 >= 12 ? 'PM' : 'AM'
+  let h = h24 % 12
+  if (h === 0) h = 12
+  return `${h} ${ampm}`
+}
+
 export function labelShort(min) {
   const h24 = Math.floor(min / 60)
   const m = min % 60
