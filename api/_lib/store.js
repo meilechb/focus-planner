@@ -82,14 +82,18 @@ async function listVersions() {
 
 async function readDoc() {
   const blobs = await listVersions()
-  if (!blobs.length) return { doc: emptyDoc() }
+  // No versions at all = genuinely empty (first run). This is the ONLY case
+  // where we may treat the doc as empty; a fetch/parse failure must throw so a
+  // write never runs against empty data and wipes the real versions.
+  if (!blobs.length) return { doc: emptyDoc(), empty: true }
   const res = await fetch(blobs[0].url) // unique, immutable URL — always fresh
-  if (!res.ok) return { doc: emptyDoc() }
+  if (!res.ok) throw new Error(`blob read failed: ${res.status}`)
+  const text = await res.text()
   let doc
   try {
-    doc = JSON.parse(await res.text())
+    doc = JSON.parse(text)
   } catch {
-    doc = emptyDoc()
+    throw new Error('blob parse failed')
   }
   if (!doc.state) doc.state = { ...DEFAULT_STATE }
   if (!Array.isArray(doc.connections)) doc.connections = []
@@ -112,10 +116,16 @@ async function mutateDoc(mutator) {
     addRandomSuffix: true,
     contentType: 'application/json',
   })
-  // Clean up every older version, keeping only what we just wrote.
+  // Clean up ONLY versions older than the one we just wrote — never newer ones
+  // (a concurrent writer's version), so overlapping writes can't delete each
+  // other's data. Newest-first list; keep our write and anything above it.
   try {
-    const stale = (await listVersions()).filter((b) => b.url !== written.url).map((b) => b.url)
-    if (stale.length) await del(stale)
+    const all = await listVersions() // newest first
+    const ourIdx = all.findIndex((b) => b.url === written.url)
+    if (ourIdx !== -1) {
+      const stale = all.slice(ourIdx + 1).map((b) => b.url)
+      if (stale.length) await del(stale)
+    }
   } catch {}
   return result
 }
@@ -124,7 +134,7 @@ async function mutateDoc(mutator) {
 // State access
 // ---------------------------------------------------------------------------
 
-const STATE_KEYS = new Set([
+export const STATE_KEYS = new Set([
   'timezone',
   'projects',
   'blocks',
@@ -176,9 +186,12 @@ export async function saveConnection(conn) {
       ...conn,
       refresh_token: encryptSecret(conn.refresh_token),
     }
-    const idx = doc.connections.findIndex(
-      (x) => x.provider === conn.provider && x.account_email === conn.account_email,
-    )
+    // Upsert only when we have a real email to match on; otherwise (email
+    // lookup failed) always insert as a distinct connection so two unknown
+    // accounts don't collide on (provider, null) and overwrite each other.
+    const idx = conn.account_email
+      ? doc.connections.findIndex((x) => x.provider === conn.provider && x.account_email === conn.account_email)
+      : -1
     if (idx >= 0) {
       stored.id = doc.connections[idx].id // keep stable id
       doc.connections[idx] = stored

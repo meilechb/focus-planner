@@ -449,13 +449,13 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .star { background: none; border: none; color: var(--faint); font-size: 14px; padding: 0 2px; opacity: 0; }
 .proj-row:hover .star { opacity: 1; }
 .star.on { color: #f5b301; opacity: 1; }
-.fav-grid { display: grid; grid-template-columns: 1fr; gap: 7px; max-height: 42vh; overflow-y: auto; margin: 0 -2px; padding: 0 2px; }
-.fav-card { position: relative; display: flex; align-items: flex-start; gap: 9px; border: none; border-radius: 11px; padding: 11px 12px; cursor: grab; color: #fff; box-shadow: var(--shadow-sm); overflow: hidden; transition: transform .1s, box-shadow .12s; }
+.fav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; max-height: 42vh; overflow-y: auto; margin: 0 -2px; padding: 0 2px; }
+.fav-card { position: relative; display: flex; align-items: flex-start; gap: 7px; border: none; border-radius: 11px; padding: 10px 10px; cursor: grab; color: #fff; box-shadow: var(--shadow-sm); overflow: hidden; transition: transform .1s, box-shadow .12s; min-height: 54px; }
 .fav-card::after { content: ''; position: absolute; inset: 0; background: linear-gradient(155deg, rgba(255,255,255,.18), rgba(255,255,255,0) 62%); pointer-events: none; }
 .fav-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
 .fav-ic { position: relative; z-index: 1; opacity: .95; margin-top: 1px; flex: none; }
-.fav-name { position: relative; z-index: 1; flex: 1; min-width: 0; font-size: 12.5px; font-weight: 650; line-height: 1.3; text-shadow: 0 1px 1.5px rgba(0,0,0,.18);
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.fav-name { position: relative; z-index: 1; flex: 1; min-width: 0; font-size: 12px; font-weight: 600; line-height: 1.28; text-shadow: 0 1px 1.5px rgba(0,0,0,.18); word-break: normal; overflow-wrap: break-word;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .fav-x { position: relative; z-index: 1; background: none; border: none; color: #fff; opacity: 0; padding: 0; flex: none; margin-top: 1px; transition: opacity .12s; }
 .fav-card:hover .fav-x { opacity: .9; }
 .fav-x:hover { opacity: 1 !important; transform: scale(1.1); }

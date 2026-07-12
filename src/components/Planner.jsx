@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../lib/api.js'
 import {
   PALETTE, DAY_START, DAY_END, SNAP_MIN, ACCENT,
-  isoDate, addDays, startOfWeek, weekDays, monthGridDays, monthOf, dayNum,
+  isoDate, addDays, addMonths, weekDays, monthGridDays, monthOf, dayNum,
   label, labelShort, hourLabel, snap, clamp, uuid, buffersFrom, computeFocus, nowMinutes, localDateISO,
   fitDrop, clampMove, clampResizeBottom, clampResizeTop,
 } from '../lib/lib.js'
@@ -20,6 +20,9 @@ function defaultZoom() {
 }
 const CACHE_KEY = 'focus_cache'
 function readCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}') } catch { return {} } }
+const SEEN_KEY = 'focus_seen_accounts'
+function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
+function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
 const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 const timeToMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m }
 
@@ -43,7 +46,7 @@ export default function Planner() {
   const [viewDate, setViewDate] = useState(() => isoDate(new Date(), readCache().tz || DEFAULT_TZ))
   const [view, setView] = useState(() => readCache().view || 'day') // day | week | month
   const [zoom, setZoom] = useState(() => { const s = Number(localStorage.getItem(ZOOM_KEY)); return s ? Math.min(3, Math.max(1, s)) : defaultZoom() })
-  const [now, setNow] = useState(() => nowMinutes(DEFAULT_TZ))
+  const [now, setNow] = useState(() => nowMinutes(readCache().tz || DEFAULT_TZ))
 
   const [taskFilter, setTaskFilter] = useState('all')
   const [taskSearch, setTaskSearch] = useState('')
@@ -130,27 +133,41 @@ export default function Planner() {
       ])
       setCalAccounts(cal.accounts || [])
       setTaskAccounts(tl.accounts || [])
-      // Auto-select everything for any account that has NOTHING selected yet
-      // (a newly connected account), without clobbering per-account choices.
+      // Auto-select an account's calendars/lists ONCE, the first time we ever
+      // see it. After that we remember it (seen set) and never re-add, so if the
+      // user deliberately unchecks all of an account's calendars it stays that way.
+      const seen = readSeen()
       const baseCals = state?.selectedCalendars || readCache().selectedCalendars || []
       const nextCals = [...baseCals]
       for (const a of cal.accounts || []) {
-        const keys = a.calendars.map((c) => `${a.connId}::${c.id}`)
-        if (keys.length && !keys.some((k) => nextCals.includes(k))) nextCals.push(...keys)
+        if (seen.has('cal:' + a.connId)) continue
+        seen.add('cal:' + a.connId)
+        for (const c of a.calendars) { const k = `${a.connId}::${c.id}`; if (!nextCals.includes(k)) nextCals.push(k) }
       }
       if (nextCals.length !== baseCals.length) { setSelectedCalendars(nextCals); saveKey('selectedCalendars', nextCals) }
 
       const baseLists = state?.selectedTaskLists || readCache().selectedTaskLists || []
       const nextLists = [...baseLists]
       for (const a of tl.accounts || []) {
-        const keys = a.lists.map((l) => `${a.connId}::${l.id}`)
-        if (keys.length && !keys.some((k) => nextLists.includes(k))) nextLists.push(...keys)
+        if (seen.has('list:' + a.connId)) continue
+        seen.add('list:' + a.connId)
+        for (const l of a.lists) { const k = `${a.connId}::${l.id}`; if (!nextLists.includes(k)) nextLists.push(k) }
       }
       if (nextLists.length !== baseLists.length) { setSelectedTaskLists(nextLists); saveKey('selectedTaskLists', nextLists) }
+      writeSeen(seen)
     } catch (e) { console.error('google meta', e) }
   }
   async function loadZoho() {
-    try { setZoho(await api.post('/api/zoho/data', { action: 'fetch' })) } catch (e) { console.error('zoho', e) }
+    try {
+      const r = await api.post('/api/zoho/data', { action: 'fetch' })
+      // Normalize into the exact shape the UI expects, so a partial/error
+      // response can never crash the planner on the next render.
+      setZoho({
+        crm: { deals: r?.crm?.deals || [], leads: r?.crm?.leads || [] },
+        projects: Array.isArray(r?.projects) ? r.projects : [],
+        errors: r?.errors || [],
+      })
+    } catch (e) { console.error('zoho', e) }
   }
   async function disconnect(id) {
     await api.del('/api/connections?id=' + id).catch(() => {})
@@ -201,7 +218,7 @@ export default function Planner() {
       .catch(() => {})
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, selectedCalendars, today, range.start, range.end])
+  }, [connected, selectedCalendars, today, range.start, range.end, refreshNonce])
 
   useEffect(() => {
     if (!connected || !selectedTaskLists.length) { setGtasks([]); return }
@@ -238,15 +255,15 @@ export default function Planner() {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       if (e.target.closest && e.target.closest('input, textarea, .modal')) return
       const k = e.key.toLowerCase()
-      const stepFor = () => (view === 'week' ? 7 : view === 'month' ? 30 : 1)
+      const nav = (dir) => setViewDate((v) => (view === 'month' ? addMonths(v, dir) : addDays(v, dir * (view === 'week' ? 7 : 1))))
       if (k === 't') setViewDate(today)
       else if (k === 'd') setView('day')
       else if (k === 'w') setView('week')
       else if (k === 'm') setView('month')
       else if (k === '?' || (e.key === '/' && e.shiftKey)) setShowHelp((v) => !v)
       else if (e.key === 'Escape') setShowHelp(false)
-      else if (e.key === 'ArrowLeft') setViewDate((v) => addDays(v, -stepFor()))
-      else if (e.key === 'ArrowRight') setViewDate((v) => addDays(v, stepFor()))
+      else if (e.key === 'ArrowLeft') nav(-1)
+      else if (e.key === 'ArrowRight') nav(1)
       else return
       e.preventDefault()
     }
@@ -337,7 +354,7 @@ export default function Planner() {
   // --- task groups ----------------------------------------------------------
   const displayGroups = useMemo(() => {
     const q = taskSearch.trim().toLowerCase()
-    const dueOk = (t) => taskFilter === 'all' || (t.due && localDateISO(t.due, tz) === viewDate)
+    const dueOk = (t) => taskFilter === 'all' || (t.due && localDateISO(t.due, tz) <= today)
     const searchOk = (t) => !q || (t.title || '').toLowerCase().includes(q) || (t.sub || '').toLowerCase().includes(q)
     // Overdue/soonest first, then undated, then alphabetical.
     const byDue = (a, b) => {
@@ -355,15 +372,18 @@ export default function Planner() {
         lists: a.lists.map((l) => ({ id: l.id, title: l.title, tasks: gtasks.filter((t) => t.connId === a.connId && t.listId === l.id).filter(dueOk).filter(searchOk).map((t) => ({ ...t, source: 'google' })).sort(byDue) })),
       })
     }
-    if (hasZoho) {
+    if (hasZoho && zoho) {
+      const deals = zoho.crm?.deals || []
+      const leads = zoho.crm?.leads || []
+      const zprojects = zoho.projects || []
       const crmLists = []
-      if (zoho.crm.deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: zoho.crm.deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })).filter(searchOk) })
-      if (zoho.crm.leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: zoho.crm.leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })).filter(searchOk) })
+      if (deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })).filter(searchOk) })
+      if (leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })).filter(searchOk) })
       if (crmLists.length) groups.push({ id: 'zoho-crm', account: 'Zoho CRM', lists: crmLists })
-      if (zoho.projects.length) groups.push({ id: 'zoho-projects', account: 'Zoho Projects', lists: zoho.projects.map((p) => ({ id: p.id, title: p.name, tasks: p.tasks.map((t) => ({ ...t, source: 'zoho' })).filter(searchOk) })) })
+      if (zprojects.length) groups.push({ id: 'zoho-projects', account: 'Zoho Projects', lists: zprojects.map((p) => ({ id: p.id, title: p.name, tasks: (p.tasks || []).map((t) => ({ ...t, source: 'zoho' })).filter(searchOk) })) })
     }
     return groups
-  }, [connected, hasZoho, taskAccounts, gtasks, zoho, taskFilter, taskSearch, tz, viewDate])
+  }, [connected, hasZoho, taskAccounts, gtasks, zoho, taskFilter, taskSearch, tz, today])
 
   // --- focus ----------------------------------------------------------------
   const focus = useMemo(() => {
@@ -506,7 +526,7 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, si
   if (view === 'month') title = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
   else if (view === 'week') { const w = weekDays(viewDate); const a = new Date(w[0] + 'T12:00:00'); const b = new Date(w[6] + 'T12:00:00'); title = `${a.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${b.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` }
   else title = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
-  const gotoMonth = (n) => { const nd = new Date(d); nd.setMonth(nd.getMonth() + n); setViewDate(nd.toISOString().slice(0, 10)) }
+  const gotoMonth = (n) => setViewDate(addMonths(viewDate, n))
   return (
     <div className="topbar">
       <button className="icon-btn" title="Toggle sidebar" onClick={onToggleSidebar}><Icon name="sidebar" size={18} /></button>
@@ -724,10 +744,10 @@ function Sidebar(props) {
     if (!iso) return null
     const overdue = iso < today
     const isToday = iso === today
-    if (!overdue && !isToday && iso > today) {
+    if (!overdue && !isToday) { // future
       const d = new Date(iso + 'T12:00:00')
-      const soon = (new Date(d) - new Date(today + 'T12:00:00')) / 86400000 <= 7
-      if (!soon) return null
+      const daysOut = (d - new Date(today + 'T12:00:00')) / 86400000
+      if (daysOut > 7) return null // only surface due dates within a week
       return <span className="due-badge">{d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
     }
     return <span className={'due-badge' + (overdue ? ' overdue' : ' today')}>{overdue ? 'Overdue' : 'Today'}</span>
@@ -1111,7 +1131,7 @@ function BlockModal({ entry, projects, onSave, onDelete, onDuplicate, onClose })
           ? <div><div className="field-label">Project</div><div className="field" style={{ background: 'var(--panel-2)' }}>{proj?.name || 'Project'}</div></div>
           : <div><div className="field-label">Title</div><input className="field" value={b.title || ''} onChange={(e) => setB({ ...b, title: e.target.value })} /></div>}
         <div className="modal-row">
-          <div style={{ flex: 1 }}><div className="field-label">Start</div><input type="time" className="field" step="900" value={minToTime(b.start)} onChange={(e) => setB({ ...b, start: timeToMin(e.target.value) })} /></div>
+          <div style={{ flex: 1 }}><div className="field-label">Start</div><input type="time" className="field" step="900" value={minToTime(b.start)} onChange={(e) => { const s = timeToMin(e.target.value); setB((prev) => ({ ...prev, start: s, end: Math.max(prev.end, s + SNAP_MIN) })) }} /></div>
           <div style={{ flex: 1 }}><div className="field-label">End</div><input type="time" className="field" step="900" value={minToTime(b.end)} onChange={(e) => setB({ ...b, end: Math.max(timeToMin(e.target.value), b.start + SNAP_MIN) })} /></div>
         </div>
         {!isProject && <div><div className="field-label">Color</div><div className="swatches">{PALETTE.map((c) => <button key={c} className={'swatch-btn' + (b.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setB({ ...b, color: c })} />)}</div></div>}

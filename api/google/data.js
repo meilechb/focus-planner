@@ -70,10 +70,13 @@ export default async function handler(req, res) {
       const tz = (await getPublicState()).timezone || 'America/New_York'
       const events = []
       for (const entry of cals) {
-        const { accessToken } = await tokenFor(entry.connId)
+        let accessToken
+        try { ;({ accessToken } = await tokenFor(entry.connId)) } catch { continue }
         for (const calendarId of entry.calendarIds || []) {
-          const evs = await listEvents({ accessToken, calendarId, dateISO, tz })
-          for (const e of evs) events.push({ ...e, connId: entry.connId, calendarId })
+          try {
+            const evs = await listEvents({ accessToken, calendarId, dateISO, tz })
+            for (const e of evs) events.push({ ...e, connId: entry.connId, calendarId })
+          } catch { /* skip a calendar that errors */ }
         }
       }
       return res.status(200).json({ events })

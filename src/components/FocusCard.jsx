@@ -17,21 +17,23 @@ export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNex
   const [box, setBox] = useState(loadBox)
   const drag = useRef(null)
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify(box))
-    } catch {}
-  }, [box])
+  const persist = (b) => { try { localStorage.setItem(LS_KEY, JSON.stringify(b)) } catch {} }
 
-  // default to bottom-right on first render if never positioned
+  // Keep the card on-screen: default to bottom-right if never positioned, and
+  // re-clamp into the viewport on mount and whenever the window resizes (a box
+  // saved on a bigger window could otherwise render fully off-screen).
   useEffect(() => {
-    if (box.x == null || box.y == null) {
-      setBox((b) => ({
-        ...b,
-        x: window.innerWidth - b.w - 24,
-        y: window.innerHeight - b.h - 24,
-      }))
-    }
+    const clampIn = () => setBox((b) => {
+      const w = b.w, h = b.h
+      const x = b.x == null ? window.innerWidth - w - 24 : Math.min(Math.max(0, b.x), Math.max(0, window.innerWidth - w))
+      const y = b.y == null ? window.innerHeight - h - 24 : Math.min(Math.max(0, b.y), Math.max(0, window.innerHeight - h))
+      const next = { ...b, x, y }
+      persist(next)
+      return next
+    })
+    clampIn()
+    window.addEventListener('resize', clampIn)
+    return () => window.removeEventListener('resize', clampIn)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -65,6 +67,7 @@ export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNex
     drag.current = null
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
+    setBox((b) => { persist(b); return b }) // save once, at the end of the gesture
   }
 
   const style = {

@@ -33,6 +33,18 @@ export function addDays(iso, n) {
   return d.toISOString().slice(0, 10)
 }
 
+// Add `n` calendar months, clamping the day to the target month's length
+// (so Jan 31 + 1 = Feb 28/29, never skipping to March). UTC-based like addDays.
+export function addMonths(iso, n) {
+  const d = parseISO(iso)
+  const day = d.getUTCDate()
+  d.setUTCDate(1)
+  d.setUTCMonth(d.getUTCMonth() + n)
+  const daysInMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate()
+  d.setUTCDate(Math.min(day, daysInMonth))
+  return d.toISOString().slice(0, 10)
+}
+
 // Sunday-based start of week for an ISO date.
 export function startOfWeek(iso) {
   const d = parseISO(iso)

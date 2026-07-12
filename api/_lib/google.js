@@ -107,8 +107,8 @@ function meetingLink(ev) {
   const eps = ev.conferenceData?.entryPoints || []
   const video = eps.find((e) => e.entryPointType === 'video')
   if (video?.uri) return video.uri
-  const phone = eps.find((e) => e.entryPointType === 'video' || e.entryPointType === 'more')
-  return phone?.uri || null
+  const more = eps.find((e) => e.entryPointType === 'more')
+  return more?.uri || null
 }
 
 // Google descriptions can hold light HTML; flatten to readable plain text.
@@ -125,11 +125,16 @@ function cleanDesc(d) {
 }
 
 function mapEvent(ev, tz, withDate) {
+  const start = toLocalMinutes(ev.start.dateTime, tz)
+  let end = toLocalMinutes(ev.end.dateTime, tz)
+  // An event ending at (or past) local midnight maps end to 0/next-day, which
+  // would produce a zero/negative-duration block. Clamp it to end-of-day.
+  if (end <= start || localDateISO(ev.end.dateTime, tz) > localDateISO(ev.start.dateTime, tz)) end = 1440
   const out = {
     id: ev.id,
     title: ev.summary || '(no title)',
-    start: toLocalMinutes(ev.start.dateTime, tz),
-    end: toLocalMinutes(ev.end.dateTime, tz),
+    start,
+    end,
     location: ev.location || null,
     description: cleanDesc(ev.description),
     link: meetingLink(ev),
