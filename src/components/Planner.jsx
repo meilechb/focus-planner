@@ -19,6 +19,7 @@ export default function Planner() {
   const [tz, setTz] = useState(() => readCache().tz || DEFAULT_TZ)
   const [projects, setProjects] = useState(() => readCache().projects || [])
   const [blocks, setBlocks] = useState(() => readCache().blocks || {})
+  const [favorites, setFavorites] = useState(() => readCache().favorites || [])
   const [connections, setConnections] = useState(() => readCache().connections || [])
   const [storageOk, setStorageOk] = useState(true)
   const [banner, setBanner] = useState('')
@@ -57,11 +58,11 @@ export default function Planner() {
   useEffect(() => {
     try {
       localStorage.setItem(CACHE_KEY, JSON.stringify({
-        tz, projects, blocks, selectedCalendars, selectedTaskLists,
+        tz, projects, blocks, favorites, selectedCalendars, selectedTaskLists,
         connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho, focusHidden,
       }))
     } catch {}
-  }, [tz, projects, blocks, selectedCalendars, selectedTaskLists, connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho, focusHidden])
+  }, [tz, projects, blocks, favorites, selectedCalendars, selectedTaskLists, connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho, focusHidden])
 
   // --- boot -----------------------------------------------------------------
   useEffect(() => {
@@ -73,6 +74,7 @@ export default function Planner() {
         if (state.timezone) setTz(state.timezone)
         setProjects(state.projects || [])
         setBlocks(state.blocks || {})
+        setFavorites(state.favorites || [])
         setSelectedCalendars(state.selectedCalendars || [])
         setSelectedTaskLists(state.selectedTaskLists || [])
         setStorageOk(true)
@@ -228,8 +230,10 @@ export default function Planner() {
     updateProjects(projects.some((x) => x.id === p.id) ? projects.map((x) => (x.id === p.id ? clean : x)) : [...projects, clean])
     setEditProject(null)
   }
-  function deleteProject(id) { updateProjects(projects.filter((x) => x.id !== id)) }
-  function toggleFavorite(id) { updateProjects(projects.map((p) => (p.id === id ? { ...p, favorite: !p.favorite } : p))) }
+  function deleteProject(id) { updateProjects(projects.filter((x) => x.id !== id)); unfav('p:' + id) }
+  const isFav = (id) => favorites.some((f) => f.id === id)
+  function toggleFav(entry) { const next = isFav(entry.id) ? favorites.filter((f) => f.id !== entry.id) : [...favorites, entry]; setFavorites(next); saveKey('favorites', next) }
+  function unfav(id) { if (isFav(id)) { const next = favorites.filter((f) => f.id !== id); setFavorites(next); saveKey('favorites', next) } }
 
   function toggleCalendar(k) { const n = selectedCalendars.includes(k) ? selectedCalendars.filter((x) => x !== k) : [...selectedCalendars, k]; setSelectedCalendars(n); saveKey('selectedCalendars', n) }
   function toggleTaskList(k) { const n = selectedTaskLists.includes(k) ? selectedTaskLists.filter((x) => x !== k) : [...selectedTaskLists, k]; setSelectedTaskLists(n); saveKey('selectedTaskLists', n) }
@@ -308,7 +312,8 @@ export default function Planner() {
   return (
     <div className={'app' + (sidebarOpen ? '' : ' sidebar-collapsed')}>
       <Sidebar
-        projects={projects} onNewProject={newProject} onEditProject={setEditProject} onDeleteProject={deleteProject} onToggleFavorite={toggleFavorite}
+        projects={projects} onNewProject={newProject} onEditProject={setEditProject} onDeleteProject={deleteProject}
+        favorites={favorites} isFav={isFav} toggleFav={toggleFav}
         connected={connected} hasZoho={hasZoho} groups={displayGroups}
         taskFilter={taskFilter} setTaskFilter={setTaskFilter} taskSearch={taskSearch} setTaskSearch={setTaskSearch}
         collapsed={collapsed} setCollapsed={setCollapsed} sections={sections} setSections={setSections}
@@ -317,7 +322,6 @@ export default function Planner() {
       />
 
       <main className="main">
-        <div className="main-card">
         <TopBar
           view={view} setView={setView} viewDate={viewDate} setViewDate={setViewDate} today={today}
           zoom={zoom} setZoom={setZoom} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)}
@@ -325,6 +329,7 @@ export default function Planner() {
         {!storageOk && <div className="banner warn">Couldn't reach storage — retrying to save your changes…</div>}
         {banner && <div className="banner ok">{banner}<button className="icon-btn x" onClick={() => setBanner('')}>×</button></div>}
 
+        <div className="main-card">
         {view === 'day' && (
           <DayGrid
             day={viewDate} today={today} now={now} zoom={zoom}
@@ -583,7 +588,7 @@ function MonthGrid({ viewDate, today, blocksByDay, meetingsFor, blockColor, bloc
 /* ---- Sidebar ---- */
 function Sidebar(props) {
   const {
-    projects, onNewProject, onEditProject, onDeleteProject, onToggleFavorite, connected, hasZoho, groups,
+    projects, onNewProject, onEditProject, onDeleteProject, favorites, isFav, toggleFav, connected, hasZoho, groups,
     taskFilter, setTaskFilter, taskSearch, setTaskSearch, collapsed, setCollapsed, sections, setSections,
     connections, onOpenConnections, remState, onEnableReminders,
   } = props
@@ -597,61 +602,67 @@ function Sidebar(props) {
     setTimeout(() => el.remove(), 0)
   }
   const dragProject = (e, p) => { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'project', projectId: p.id })); chip(e, p.name, p.color) }
-  const dragTask = (e, task, g, l) => { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', task: { ...task, connId: g.id, listId: l.id } })); chip(e, task.title) }
-  const dragBatch = (e, g, l) => { const tasks = l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })); e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: l.title, tasks })); chip(e, `${l.title} · ${tasks.length}`) }
+  const dragTask = (e, task, g, l) => { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', task: { ...task, connId: g.id, listId: l.id } })); chip(e, task.title, g.id.startsWith('zoho') ? '#e42527' : '#2563eb') }
+  const dragBatch = (e, g, l) => { const tasks = l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })); e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: l.title, tasks })); chip(e, `${l.title} · ${tasks.length}`, g.id.startsWith('zoho') ? '#e42527' : '#2563eb') }
+  const dragFav = (e, f) => { e.dataTransfer.setData('application/json', JSON.stringify(f.payload)); chip(e, f.label, f.color) }
   const toggleSec = (k) => setSections({ ...sections, [k]: !sections[k] })
-  const favorites = projects.filter((p) => p.favorite)
+
+  const projEntry = (p) => ({ id: 'p:' + p.id, kind: 'project', label: p.name, color: p.color, projectId: p.id, payload: { kind: 'project', projectId: p.id } })
+  const taskEntry = (t, g, l) => ({ id: `t:${g.id}:${l.id}:${t.id}`, kind: 'task', label: t.title, color: g.id.startsWith('zoho') ? '#e42527' : '#2563eb', payload: { kind: 'task', task: { ...t, connId: g.id, listId: l.id } } })
+  const zpEntry = (g, l) => ({ id: 'z:' + l.id, kind: 'zohoproject', label: l.title, color: '#e42527', payload: { kind: 'batch', title: l.title, tasks: l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) } })
+  const favIcon = (k) => (k === 'project' ? '◧' : k === 'zohoproject' ? '❑' : '✓')
 
   return (
     <aside className="sidebar">
       <div className="brand"><span className="dot" /> Focus Planner</div>
 
-      {favorites.length > 0 && (
-        <div className="sb-fixed">
-          <div className="sb-head">Favorites</div>
-          <div className="fav-grid">
-            {favorites.map((p) => (
-              <div key={p.id} className="fav-card" draggable onDragStart={(e) => dragProject(e, p)} onClick={() => onEditProject(p)}>
-                <span className="fav-dot" style={{ background: p.color }} />
-                <span className="fav-name">{p.name}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="sb-fixed">
-        <div className="sb-head clickable" onClick={() => toggleSec('projects')}>
-          <span>Projects</span><span className="caret">{sections.projects ? '▸' : '▾'}</span>
-        </div>
-        {!sections.projects && (
-          <>
-            <div className="proj-list">
-              {projects.map((p) => (
-                <div key={p.id} className="proj-row" draggable onDragStart={(e) => dragProject(e, p)}>
-                  <span className="grip">⋮⋮</span>
-                  <span className="swatch" style={{ background: p.color }} />
-                  <span className="proj-name" onClick={() => onEditProject(p)}>{p.name}</span>
-                  <button className={'star' + (p.favorite ? ' on' : '')} title={p.favorite ? 'Unfavorite' : 'Favorite'} onClick={() => onToggleFavorite(p.id)}>{p.favorite ? '★' : '☆'}</button>
-                  <button className="row-x" onClick={() => onDeleteProject(p.id)}>×</button>
+      <div className="sb-scroll">
+        {favorites.length > 0 && (
+          <div className="sb-block">
+            <div className="sb-head"><span><span className="sb-ic">★</span> Favorites</span></div>
+            <div className="fav-grid">
+              {favorites.map((f) => (
+                <div key={f.id} className="fav-card" style={{ background: f.color }} draggable onDragStart={(e) => dragFav(e, f)}
+                  onClick={() => { if (f.kind === 'project') { const p = projects.find((x) => x.id === f.projectId); if (p) onEditProject(p) } }}>
+                  <span className="fav-ic">{favIcon(f.kind)}</span>
+                  <span className="fav-name">{f.label}</span>
+                  <button className="fav-x" title="Unfavorite" onClick={(e) => { e.stopPropagation(); toggleFav(f) }}>★</button>
                 </div>
               ))}
-              {projects.length === 0 && <div className="muted" style={{ padding: '2px 8px' }}>No projects yet — drag one onto the grid to block time.</div>}
             </div>
-            <button className="btn new-proj" onClick={onNewProject}>＋ New project</button>
-          </>
-        )}
-      </div>
-
-      <div className="sb-tasks">
-        <div className="sb-head sticky"><span>Tasks</span>
-          <div className="seg">
-            <button className={'seg-btn' + (taskFilter === 'all' ? ' on' : '')} onClick={() => setTaskFilter('all')}>All</button>
-            <button className={'seg-btn' + (taskFilter === 'today' ? ' on' : '')} onClick={() => setTaskFilter('today')}>Today</button>
           </div>
+        )}
+
+        <div className="sb-block">
+          <div className="sb-head clickable" onClick={() => toggleSec('projects')}>
+            <span><span className="sb-ic">◧</span> Projects</span><span className="caret">{sections.projects ? '▸' : '▾'}</span>
+          </div>
+          {!sections.projects && (
+            <>
+              <div className="proj-list">
+                {projects.map((p) => (
+                  <div key={p.id} className="proj-row" draggable onDragStart={(e) => dragProject(e, p)}>
+                    <span className="swatch" style={{ background: p.color }} />
+                    <span className="proj-name" onClick={() => onEditProject(p)}>{p.name}</span>
+                    <button className={'star' + (isFav('p:' + p.id) ? ' on' : '')} title="Favorite" onClick={() => toggleFav(projEntry(p))}>{isFav('p:' + p.id) ? '★' : '☆'}</button>
+                    <button className="row-x" onClick={() => onDeleteProject(p.id)}>×</button>
+                  </div>
+                ))}
+                {projects.length === 0 && <div className="muted" style={{ padding: '2px 8px' }}>No projects yet — add one and drag it onto the grid.</div>}
+              </div>
+              <button className="btn new-proj" onClick={onNewProject}>＋ New project</button>
+            </>
+          )}
         </div>
-        <div className="task-search"><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
-        <div className="tgroups">
+
+        <div className="sb-block">
+          <div className="sb-head"><span><span className="sb-ic">✓</span> Tasks</span>
+            <div className="seg">
+              <button className={'seg-btn' + (taskFilter === 'all' ? ' on' : '')} onClick={() => setTaskFilter('all')}>All</button>
+              <button className={'seg-btn' + (taskFilter === 'today' ? ' on' : '')} onClick={() => setTaskFilter('today')}>Today</button>
+            </div>
+          </div>
+          <div className="task-search"><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
           {!connected && !hasZoho && (
             <div className="empty-hint">No accounts connected.<br /><button className="link" onClick={onOpenConnections}>Connect Google or Zoho</button> to see your tasks.</div>
           )}
@@ -660,17 +671,25 @@ function Sidebar(props) {
               <div className="tgroup-head">{g.account}</div>
               {g.lists.map((l) => {
                 const key = g.id + '/' + l.id; const col = collapsed[key]
+                const isZP = g.id === 'zoho-projects'
                 return (
                   <div key={l.id}>
                     <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l)}>
                       <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !col })}>{col ? '▸' : '▾'}</button>
-                      <span className="tlist-title">{l.title}</span><span className="tlist-count">{l.tasks.length}</span>
+                      <span className="tlist-title">{l.title}</span>
+                      {isZP && <button className={'star' + (isFav('z:' + l.id) ? ' on' : '')} title="Favorite project" onClick={(e) => { e.stopPropagation(); toggleFav(zpEntry(g, l)) }}>{isFav('z:' + l.id) ? '★' : '☆'}</button>}
+                      <span className="tlist-count">{l.tasks.length}</span>
                     </div>
-                    {!col && l.tasks.map((t) => (
-                      <div key={t.id} className="titem" draggable onDragStart={(e) => dragTask(e, t, g, l)}>
-                        <span className="tdot" /><span>{t.title}{t.sub ? <div className="tsub">{t.sub}</div> : null}</span>
-                      </div>
-                    ))}
+                    {!col && l.tasks.map((t) => {
+                      const tid = `t:${g.id}:${l.id}:${t.id}`
+                      return (
+                        <div key={t.id} className="titem" draggable onDragStart={(e) => dragTask(e, t, g, l)}>
+                          <span className="tdot" />
+                          <span className="titem-body">{t.title}{t.sub ? <div className="tsub">{t.sub}</div> : null}</span>
+                          <button className={'star' + (isFav(tid) ? ' on' : '')} title="Favorite" onClick={(e) => { e.stopPropagation(); toggleFav(taskEntry(t, g, l)) }}>{isFav(tid) ? '★' : '☆'}</button>
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })}
