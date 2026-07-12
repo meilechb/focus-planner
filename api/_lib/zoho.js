@@ -192,19 +192,22 @@ export async function listProjectTasks(portalId, projectId, accessToken) {
     .filter((t) => !(t.status && /closed/i.test(t.status.type || t.status.name || '')))
     .map((t) => {
       const owners = (t.details?.owners || []).map((o) => o.name).filter(Boolean)
-      return {
-        id: String(t.id),
-        title: t.name,
-        status: 'needsAction',
-        owners, // for "assigned to me" filtering
-        // Real project-task fields the filter builder can use.
-        fields: {
-          Status: t.status?.name || null,
-          Priority: t.priority || null,
-          Owner: owners.join(', ') || null,
-          'Task List': t.tasklist?.name || null,
-        },
+      const fields = {
+        Status: t.status?.name || null,
+        Priority: t.priority || null,
+        Owner: owners.join(', ') || null,
+        'Task List': t.tasklist?.name || null,
       }
+      // Merge in any custom fields defined on the task (shape varies by Zoho version).
+      const raw = t.custom_fields || t.customfields || []
+      if (Array.isArray(raw)) {
+        for (const c of raw) {
+          const key = c.label_name || c.column_name || c.label || c.name
+          const val = c.value != null ? c.value : c.field_value
+          if (key && val != null && val !== '') fields[key] = String(val)
+        }
+      }
+      return { id: String(t.id), title: t.name, status: 'needsAction', owners, fields }
     })
 }
 

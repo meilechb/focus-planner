@@ -63,7 +63,6 @@ export default function Planner() {
   const [editBlock, setEditBlock] = useState(null) // { block, day }
   const [showConn, setShowConn] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
-  const [showCustomize, setShowCustomize] = useState(false)
   const [navCfg, setNavCfg] = useState(readNavCfg)
   const [viewEvent, setViewEvent] = useState(null) // a Google Calendar event to inspect
   function updateNavCfg(n) { setNavCfg(n); try { localStorage.setItem(NAVCFG_KEY, JSON.stringify(n)) } catch {} }
@@ -284,7 +283,7 @@ export default function Planner() {
   useEffect(() => {
     function onEsc(e) {
       if (e.key !== 'Escape') return
-      setEditBlock(null); setEditProject(null); setShowConn(false); setShowHelp(false); setViewEvent(null); setShowCustomize(false)
+      setEditBlock(null); setEditProject(null); setShowConn(false); setShowHelp(false); setViewEvent(null)
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
@@ -462,7 +461,7 @@ export default function Planner() {
         connections={connections} onOpenConnections={() => setShowConn(true)}
         remState={remState} onEnableReminders={enableReminders}
         tz={tz} today={today}
-        navCfg={navCfg} onCustomize={() => setShowCustomize(true)}
+        navCfg={navCfg} onCustomize={() => setShowConn(true)}
       />
 
       <main className="main">
@@ -528,10 +527,10 @@ export default function Planner() {
       {showConn && (
         <ConnectionsModal connections={connections} onDisconnect={disconnect}
           calAccounts={calAccounts} selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
+          navCfg={navCfg} onNavChange={updateNavCfg} groups={displayGroups}
           onClose={() => setShowConn(false)} />
       )}
       {showHelp && <ShortcutsModal onClose={() => setShowHelp(false)} />}
-      {showCustomize && <CustomizeModal navCfg={navCfg} onChange={updateNavCfg} groups={displayGroups} connected={connected} hasZoho={hasZoho} onClose={() => setShowCustomize(false)} />}
       {viewEvent && <EventModal event={viewEvent} onClose={() => setViewEvent(null)} />}
     </div>
   )
@@ -884,7 +883,7 @@ function Sidebar(props) {
           </div>
           <div className="task-search"><Icon name="search" size={15} className="search-ic" /><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
           {(connected || hasZoho) && (
-            <button className="customize-btn" onClick={onCustomize}><Icon name="sliders" size={14} /> Customize nav bar</button>
+            <button className="customize-btn" onClick={onCustomize}><Icon name="sliders" size={14} /> Modules &amp; filters</button>
           )}
           {!connected && !hasZoho && (
             <div className="empty-hint">No accounts connected.<br /><button className="link" onClick={onOpenConnections}>Connect Google or Zoho</button> to see your tasks.</div>
@@ -966,7 +965,7 @@ function ZohoIcon({ size = 26 }) {
 }
 function ProviderIcon({ provider, size }) { return provider === 'zoho' ? <ZohoIcon size={size} /> : <GoogleIcon size={size} /> }
 
-function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar, onClose }) {
+function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar, navCfg, onNavChange, groups, onClose }) {
   const [detail, setDetail] = useState(null)
   const [addGoogle, setAddGoogle] = useState(false)
   const featBadges = (c) => (c.provider === 'google' ? (c.extra?.features || ['calendar', 'tasks']) : ['deals', 'leads', 'projects'])
@@ -1015,6 +1014,7 @@ function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCale
         <ConnectionDetailModal connection={detail}
           calendars={detail.provider === 'google' && (detail.extra?.features || ['calendar']).includes('calendar') ? (calAccounts.find((a) => a.connId === detail.id)?.calendars || []) : []}
           selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
+          navCfg={navCfg} onNavChange={onNavChange} groups={groups}
           onDisconnect={() => { onDisconnect(detail.id); setDetail(null) }} onClose={() => setDetail(null)} />
       )}
       {addGoogle && <AddGoogleModal onClose={() => setAddGoogle(false)} />}
@@ -1022,24 +1022,70 @@ function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCale
   )
 }
 
-function ConnectionDetailModal({ connection: c, calendars, selectedCalendars, toggleCalendar, onDisconnect, onClose }) {
-  const feats = c.provider === 'google' ? (c.extra?.features || ['calendar', 'tasks']) : ['deals', 'leads', 'projects']
+function ConnectionDetailModal({ connection: c, calendars, selectedCalendars, toggleCalendar, navCfg, onNavChange, groups, onDisconnect, onClose }) {
+  const isZoho = c.provider === 'zoho'
+  const mods = navCfg?.modules || {}
+  const filters = navCfg?.filters || { deals: [], leads: [], projects: [] }
+  const setMod = (k, v) => onNavChange({ ...navCfg, modules: { ...mods, [k]: v } })
+  const setRules = (key, rules) => onNavChange({ ...navCfg, filters: { ...filters, [key]: rules } })
+
+  const crm = groups?.find((g) => g.id === 'zoho-crm')
+  const projGroup = groups?.find((g) => g.id === 'zoho-projects')
+  const dealsList = crm?.lists.find((l) => l.id === 'deals')
+  const leadsList = crm?.lists.find((l) => l.id === 'leads')
+  const dealOpts = fieldOptsFrom(crm?.dealFields, dealsList?.tasks)
+  const leadOpts = fieldOptsFrom(crm?.leadFields, leadsList?.tasks)
+  const projOpts = fieldOptsFrom(projGroup?.projectFields, (projGroup?.lists || []).flatMap((l) => l.tasks))
+
+  // One collapsible module block: header (name + on/off) and, when on, its filters.
+  const ModuleBlock = ({ name, moduleKey, opts, extra }) => (
+    <div className="cz-mod">
+      <div className="cz-mod-head"><span className="cz-mod-name">{name}</span><Switch on={mods[moduleKey] !== false} onClick={() => setMod(moduleKey, mods[moduleKey] === false)} /></div>
+      {mods[moduleKey] !== false && (opts || extra) && (
+        <div className="cz-mod-body">
+          {opts ? <FilterBuilder opts={opts} rules={filters[moduleKey]} onChange={(r) => setRules(moduleKey, r)} extra={extra} /> : extra}
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div className="modal-backdrop nested" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="conn-detail-head">
+      <div className="modal customize-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="conn-detail-head" style={{ padding: '0 22px 6px' }}>
           <div className="conn-logo lg"><ProviderIcon provider={c.provider} size={32} /></div>
-          <div><div className="modal-title">{c.account_label || c.account_email || (c.provider === 'zoho' ? 'Zoho' : 'Google')}</div><div className="muted" style={{ textTransform: 'capitalize' }}>{c.provider}</div></div>
+          <div><div className="modal-title">{c.account_label || c.account_email || (isZoho ? 'Zoho' : 'Google')}</div><div className="muted" style={{ textTransform: 'capitalize' }}>{c.provider}</div></div>
         </div>
-        <div><div className="field-label">Syncing</div><div className="conn-card-badges">{feats.map((f) => <span key={f} className="conn-badge">{f[0].toUpperCase() + f.slice(1)}</span>)}</div></div>
-        {calendars.length > 0 && (
-          <div><div className="field-label">Calendars shown on the grid</div>
-            {calendars.map((cal) => { const key = `${c.id}::${cal.id}`; return (
-              <label key={cal.id} className="cal-row"><input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} /><span className="swatch" style={{ background: cal.color || '#888' }} />{cal.summary}</label>
-            ) })}
-          </div>
-        )}
-        <div className="modal-actions"><button className="link danger" onClick={onDisconnect}>Disconnect account</button><div className="spacer" /><button className="btn" onClick={onClose}>Done</button></div>
+        <div className="cz-scroll">
+          {c.provider === 'google' && (
+            <>
+              {(c.extra?.features || ['calendar', 'tasks']).includes('tasks') && (
+                <ModuleBlock name="Google Tasks" moduleKey="google" />
+              )}
+              {calendars.length > 0 && (
+                <div className="cz-sec">
+                  <div className="cz-sec-title">Calendars shown on the grid</div>
+                  {calendars.map((cal) => { const key = `${c.id}::${cal.id}`; return (
+                    <label key={cal.id} className="cal-row"><input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} /><span className="swatch" style={{ background: cal.color || '#888' }} />{cal.summary}</label>
+                  ) })}
+                </div>
+              )}
+            </>
+          )}
+          {isZoho && (
+            <>
+              <ModuleBlock name="CRM · Deals" moduleKey="deals" opts={dealOpts} />
+              <ModuleBlock name="CRM · Leads" moduleKey="leads" opts={leadOpts} />
+              <ModuleBlock name="Projects" moduleKey="projects" opts={projOpts} extra={
+                <div className="seg cz-seg" style={{ marginBottom: 12 }}>
+                  <button className={'seg-btn' + (navCfg.zohoAssignee !== 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'mine' })}>Assigned to me</button>
+                  <button className={'seg-btn' + (navCfg.zohoAssignee === 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'all' })}>All tasks</button>
+                </div>
+              } />
+            </>
+          )}
+        </div>
+        <div className="modal-actions" style={{ padding: '14px 22px 0' }}><button className="link danger" onClick={onDisconnect}>Disconnect account</button><div className="spacer" /><button className="btn primary" onClick={onClose}>Done</button></div>
       </div>
     </div>
   )
@@ -1107,104 +1153,54 @@ function ShortcutsModal({ onClose }) {
   )
 }
 
-// The "Customize nav bar" panel: toggle modules, and build as many filters as you
-// want per module — each pulls a real field from your CRM/Projects and its values.
-function CustomizeModal({ navCfg, onChange, groups, connected, hasZoho, onClose }) {
-  const crm = groups.find((g) => g.id === 'zoho-crm')
-  const projGroup = groups.find((g) => g.id === 'zoho-projects')
-  const dealsList = crm?.lists.find((l) => l.id === 'deals')
-  const leadsList = crm?.lists.find((l) => l.id === 'leads')
-  const hasDeals = !!dealsList
-  const hasLeads = !!leadsList
-  const hasProjects = !!projGroup
+// A small iOS-style on/off switch.
+function Switch({ on, onClick }) {
+  return <button className={'switch' + (on ? ' on' : '')} onClick={onClick} aria-pressed={on}><span className="knob" /></button>
+}
 
-  // Field options for a module: prefer real field metadata (needs the settings
-  // scope); otherwise derive fields+values from the records themselves. Values
-  // always merge the field's picklist with values present in the data.
-  const optsFrom = (metaFields, tasks) => {
-    const t = tasks || []
-    let meta = metaFields || []
-    if (!meta.length) meta = [...new Set(t.flatMap((x) => Object.keys(x.fields || {})))].map((k) => ({ api_name: k, label: k, values: [] }))
-    return meta.map((f) => {
-      const present = t.map((x) => x.fields?.[f.api_name]).filter(Boolean)
-      return { api_name: f.api_name, label: f.label, values: [...new Set([...(f.values || []), ...present])].sort() }
-    }).filter((f) => f.values.length)
-  }
-  const dealOpts = optsFrom(crm?.dealFields, dealsList?.tasks)
-  const leadOpts = optsFrom(crm?.leadFields, leadsList?.tasks)
-  const projOpts = optsFrom(projGroup?.projectFields, (projGroup?.lists || []).flatMap((l) => l.tasks))
+// Build field options for a module: prefer real field metadata (needs the Zoho
+// settings scope); otherwise derive fields+values from the records themselves.
+// Values merge the field's picklist with values present in the data.
+function fieldOptsFrom(metaFields, tasks) {
+  const t = tasks || []
+  let meta = metaFields || []
+  if (!meta.length) meta = [...new Set(t.flatMap((x) => Object.keys(x.fields || {})))].map((k) => ({ api_name: k, label: k, values: [] }))
+  return meta.map((f) => {
+    const present = t.map((x) => x.fields?.[f.api_name]).filter(Boolean)
+    return { api_name: f.api_name, label: f.label, values: [...new Set([...(f.values || []), ...present])].sort() }
+  }).filter((f) => f.values.length)
+}
 
-  const mods = navCfg.modules || {}
-  const filters = navCfg.filters || { deals: [], leads: [], projects: [] }
-  const setMod = (k, v) => onChange({ ...navCfg, modules: { ...mods, [k]: v } })
-  const setRules = (key, rules) => onChange({ ...navCfg, filters: { ...filters, [key]: rules } })
-
-  const Toggle = ({ on, onClick }) => (
-    <button className={'switch' + (on ? ' on' : '')} onClick={onClick} aria-pressed={on}><span className="knob" /></button>
-  )
-
-  // The reusable filter builder for one module.
-  const FilterBuilder = ({ label, moduleKey, opts, extra }) => {
-    const rules = filters[moduleKey] || []
-    const addRule = () => { const f = opts[0]; if (f) setRules(moduleKey, [...rules, { field: f.api_name, values: [...f.values] }]) }
-    const removeRule = (i) => setRules(moduleKey, rules.filter((_, j) => j !== i))
-    const changeField = (i, api) => { const f = opts.find((o) => o.api_name === api); setRules(moduleKey, rules.map((r, j) => (j === i ? { field: api, values: [...(f?.values || [])] } : r))) }
-    const toggleVal = (i, v) => setRules(moduleKey, rules.map((r, j) => (j === i ? { ...r, values: r.values.includes(v) ? r.values.filter((x) => x !== v) : [...r.values, v] } : r)))
-    return (
-      <div className="cz-sec">
-        <div className="cz-sec-title">{label}</div>
-        {extra}
-        {rules.map((r, i) => {
-          const opt = opts.find((o) => o.api_name === r.field)
-          return (
-            <div key={i} className="cz-rule">
-              <div className="cz-rule-head">
-                <select className="cz-select" value={r.field} onChange={(e) => changeField(i, e.target.value)}>
-                  {opts.map((o) => <option key={o.api_name} value={o.api_name}>{o.label}</option>)}
-                </select>
-                <button className="cz-rule-x" title="Remove filter" onClick={() => removeRule(i)}><Icon name="x" size={15} /></button>
-              </div>
-              <div className="cz-chips">{(opt?.values || []).map((v) => (
-                <button key={v} className={'cz-chip' + (r.values.includes(v) ? ' on' : '')} onClick={() => toggleVal(i, v)}>{v}</button>
-              ))}</div>
-            </div>
-          )
-        })}
-        {opts.length > 0
-          ? <button className="cz-add" onClick={addRule}><Icon name="plus" size={14} /> Add filter</button>
-          : <div className="muted" style={{ fontSize: 12 }}>No fields available yet — reconnect Zoho to load your fields.</div>}
-      </div>
-    )
-  }
-
+// Add-as-many-as-you-want filter builder for one module. rules = [{field, values}].
+function FilterBuilder({ opts, rules, onChange, extra }) {
+  const rs = rules || []
+  const addRule = () => { const f = opts[0]; if (f) onChange([...rs, { field: f.api_name, values: [...f.values] }]) }
+  const removeRule = (i) => onChange(rs.filter((_, j) => j !== i))
+  const changeField = (i, api) => { const f = opts.find((o) => o.api_name === api); onChange(rs.map((r, j) => (j === i ? { field: api, values: [...(f?.values || [])] } : r))) }
+  const toggleVal = (i, v) => onChange(rs.map((r, j) => (j === i ? { ...r, values: r.values.includes(v) ? r.values.filter((x) => x !== v) : [...r.values, v] } : r)))
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal customize-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head"><div className="modal-title">Customize nav bar</div><button className="icon-btn" onClick={onClose}><Icon name="x" size={18} /></button></div>
-        <div className="cz-scroll">
-          <div className="cz-sec">
-            <div className="cz-sec-title">Modules</div>
-            {connected && <div className="cz-row"><span>Google Tasks</span><Toggle on={mods.google !== false} onClick={() => setMod('google', mods.google === false)} /></div>}
-            {hasDeals && <div className="cz-row"><span>Zoho CRM · Deals</span><Toggle on={mods.deals !== false} onClick={() => setMod('deals', mods.deals === false)} /></div>}
-            {hasLeads && <div className="cz-row"><span>Zoho CRM · Leads</span><Toggle on={mods.leads !== false} onClick={() => setMod('leads', mods.leads === false)} /></div>}
-            {hasProjects && <div className="cz-row"><span>Zoho Projects</span><Toggle on={mods.projects !== false} onClick={() => setMod('projects', mods.projects === false)} /></div>}
-            {!hasZoho && <div className="muted" style={{ fontSize: 12 }}>Connect Zoho to see CRM and Projects modules.</div>}
+    <>
+      {extra}
+      {rs.map((r, i) => {
+        const opt = opts.find((o) => o.api_name === r.field)
+        return (
+          <div key={i} className="cz-rule">
+            <div className="cz-rule-head">
+              <select className="cz-select" value={r.field} onChange={(e) => changeField(i, e.target.value)}>
+                {opts.map((o) => <option key={o.api_name} value={o.api_name}>{o.label}</option>)}
+              </select>
+              <button className="cz-rule-x" title="Remove filter" onClick={() => removeRule(i)}><Icon name="x" size={15} /></button>
+            </div>
+            <div className="cz-chips">{(opt?.values || []).map((v) => (
+              <button key={v} className={'cz-chip' + (r.values.includes(v) ? ' on' : '')} onClick={() => toggleVal(i, v)}>{v}</button>
+            ))}</div>
           </div>
-
-          {hasDeals && mods.deals !== false && <FilterBuilder label="Deals filters" moduleKey="deals" opts={dealOpts} />}
-          {hasLeads && mods.leads !== false && <FilterBuilder label="Leads filters" moduleKey="leads" opts={leadOpts} />}
-          {hasProjects && mods.projects !== false && (
-            <FilterBuilder label="Projects filters" moduleKey="projects" opts={projOpts} extra={
-              <div className="seg cz-seg" style={{ marginBottom: 12 }}>
-                <button className={'seg-btn' + (navCfg.zohoAssignee !== 'all' ? ' on' : '')} onClick={() => onChange({ ...navCfg, zohoAssignee: 'mine' })}>Assigned to me</button>
-                <button className={'seg-btn' + (navCfg.zohoAssignee === 'all' ? ' on' : '')} onClick={() => onChange({ ...navCfg, zohoAssignee: 'all' })}>All tasks</button>
-              </div>
-            } />
-          )}
-        </div>
-        <div className="modal-actions"><div className="spacer" /><button className="btn primary" onClick={onClose}>Done</button></div>
-      </div>
-    </div>
+        )
+      })}
+      {opts.length > 0
+        ? <button className="cz-add" onClick={addRule}><Icon name="plus" size={14} /> Add filter</button>
+        : <div className="muted" style={{ fontSize: 12 }}>No fields available yet — reconnect Zoho to load your fields.</div>}
+    </>
   )
 }
 
