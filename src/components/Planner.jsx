@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../lib/api.js'
-import { MOCK_MEETINGS, MOCK_TASK_GROUPS } from '../lib/mock.js'
 import {
   PALETTE, DAY_START, DAY_END, SNAP_MIN, ACCENT,
   isoDate, addDays, startOfWeek, weekDays, monthGridDays, monthOf, dayNum,
@@ -20,18 +19,18 @@ export default function Planner() {
   const [tz, setTz] = useState(() => readCache().tz || DEFAULT_TZ)
   const [projects, setProjects] = useState(() => readCache().projects || [])
   const [blocks, setBlocks] = useState(() => readCache().blocks || {})
-  const [connections, setConnections] = useState([])
+  const [connections, setConnections] = useState(() => readCache().connections || [])
   const [storageOk, setStorageOk] = useState(true)
   const [banner, setBanner] = useState('')
 
-  const [calAccounts, setCalAccounts] = useState([])
-  const [taskAccounts, setTaskAccounts] = useState([])
+  const [calAccounts, setCalAccounts] = useState(() => readCache().calAccounts || [])
+  const [taskAccounts, setTaskAccounts] = useState(() => readCache().taskAccounts || [])
   const [selectedCalendars, setSelectedCalendars] = useState(() => readCache().selectedCalendars || [])
   const [selectedTaskLists, setSelectedTaskLists] = useState(() => readCache().selectedTaskLists || [])
-  const [rangeEvents, setRangeEvents] = useState([]) // events across the visible range, each with .date
-  const [todayEvents, setTodayEvents] = useState([]) // events for today (drives the focus card)
-  const [gtasks, setGtasks] = useState([])
-  const [zoho, setZoho] = useState({ crm: { deals: [], leads: [] }, projects: [], errors: [] })
+  const [rangeEvents, setRangeEvents] = useState(() => readCache().rangeEvents || []) // events across the visible range, each with .date
+  const [todayEvents, setTodayEvents] = useState(() => readCache().todayEvents || []) // events for today (drives the focus card)
+  const [gtasks, setGtasks] = useState(() => readCache().gtasks || [])
+  const [zoho, setZoho] = useState(() => readCache().zoho || { crm: { deals: [], leads: [] }, projects: [], errors: [] })
 
   const [viewDate, setViewDate] = useState(() => isoDate(new Date(), readCache().tz || DEFAULT_TZ))
   const [view, setView] = useState('day') // day | week | month
@@ -54,10 +53,15 @@ export default function Planner() {
   const hasZoho = connections.some((c) => c.provider === 'zoho')
 
   useEffect(() => { localStorage.setItem(ZOOM_KEY, String(zoom)) }, [zoom])
-  // instant paint on next load
+  // instant paint on next load — cache everything the UI renders from
   useEffect(() => {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ tz, projects, blocks, selectedCalendars, selectedTaskLists }))
-  }, [tz, projects, blocks, selectedCalendars, selectedTaskLists])
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({
+        tz, projects, blocks, selectedCalendars, selectedTaskLists,
+        connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho,
+      }))
+    } catch {}
+  }, [tz, projects, blocks, selectedCalendars, selectedTaskLists, connections, calAccounts, taskAccounts, rangeEvents, todayEvents, gtasks, zoho])
 
   // --- boot -----------------------------------------------------------------
   useEffect(() => {
@@ -229,7 +233,7 @@ export default function Planner() {
   function toggleCalendar(k) { const n = selectedCalendars.includes(k) ? selectedCalendars.filter((x) => x !== k) : [...selectedCalendars, k]; setSelectedCalendars(n); saveKey('selectedCalendars', n) }
   function toggleTaskList(k) { const n = selectedTaskLists.includes(k) ? selectedTaskLists.filter((x) => x !== k) : [...selectedTaskLists, k]; setSelectedTaskLists(n); saveKey('selectedTaskLists', n) }
 
-  const meetingsFor = (d) => (connected ? rangeEvents.filter((e) => e.date === d) : (d === today ? MOCK_MEETINGS : []))
+  const meetingsFor = (d) => (connected ? rangeEvents.filter((e) => e.date === d) : [])
 
   // --- task groups ----------------------------------------------------------
   const displayGroups = useMemo(() => {
@@ -237,9 +241,6 @@ export default function Planner() {
     const dueOk = (t) => taskFilter === 'all' || (t.due && localDateISO(t.due, tz) === viewDate)
     const searchOk = (t) => !q || (t.title || '').toLowerCase().includes(q) || (t.sub || '').toLowerCase().includes(q)
     const groups = []
-    if (!connected && !hasZoho) {
-      for (const g of MOCK_TASK_GROUPS) groups.push({ ...g, lists: g.lists.map((l) => ({ ...l, tasks: l.tasks.filter(dueOk).filter(searchOk) })) })
-    }
     if (connected) {
       for (const a of taskAccounts) groups.push({
         id: a.connId, account: a.email || 'Google',
@@ -260,7 +261,7 @@ export default function Planner() {
   const focus = useMemo(() => {
     const todays = blocks[today] || []
     if (overrideBlockId) { const b = todays.find((x) => x.id === overrideBlockId); if (b) return computeFocus({ blocks: [b], meetings: [], buffers: [], now: b.start, projects }) }
-    const m = connected ? todayEvents : (MOCK_MEETINGS)
+    const m = connected ? todayEvents : []
     return computeFocus({ blocks: todays, meetings: m, buffers: buffersFrom(m), now, projects })
   }, [blocks, today, overrideBlockId, connected, todayEvents, now, projects])
 
@@ -607,7 +608,9 @@ function Sidebar(props) {
         </div>
         <div className="task-search"><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
         <div className="tgroups">
-          {!connected && !hasZoho && <div className="demo-note">Demo tasks — connect an account for your real tasks.</div>}
+          {!connected && !hasZoho && (
+            <div className="empty-hint">No accounts connected.<br /><button className="link" onClick={onOpenConnections}>Connect Google or Zoho</button> to see your tasks.</div>
+          )}
           {groups.map((g) => (
             <div key={g.id} className="tgroup">
               <div className="tgroup-head">{g.account}</div>
