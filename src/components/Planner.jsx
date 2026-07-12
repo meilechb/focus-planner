@@ -514,6 +514,24 @@ export default function Planner() {
             onOpenDay={(d) => { setViewDate(d); setView('day') }}
           />
         )}
+        {!connected && !hasZoho && projects.length === 0 && Object.keys(blocks).length === 0 && (
+          <div className="welcome-overlay">
+            <div className="welcome-card">
+              <div className="welcome-badge"><span className="dot" /></div>
+              <h1 className="welcome-h">Design your day around deep work</h1>
+              <p className="welcome-p">Bring your calendar and tasks together, then drag them onto the grid to block focused time. Your day, on purpose.</p>
+              <div className="welcome-actions">
+                <button className="btn primary lg" onClick={() => setShowConn(true)}><Icon name="link" size={16} /> Connect an account</button>
+                <button className="btn lg" onClick={newProject}><Icon name="plus" size={16} /> Create a project</button>
+              </div>
+              <div className="welcome-tips">
+                <div className="welcome-tip"><span className="wt-ic"><Icon name="calendar" size={15} /></span> Google Calendar, Tasks & Zoho in one view</div>
+                <div className="welcome-tip"><span className="wt-ic"><Icon name="focus" size={15} /></span> A focus card shows what to work on now</div>
+                <div className="welcome-tip"><span className="wt-ic"><Icon name="sliders" size={15} /></span> Press <kbd className="kbd">?</kbd> anytime for shortcuts</div>
+              </div>
+            </div>
+          </div>
+        )}
         </div>
       </main>
 
