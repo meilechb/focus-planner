@@ -371,8 +371,8 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
    ============================================================ */
 .cal-scroll { flex: 1; overflow-y: auto; background: var(--panel); }
 .grid { position: relative; margin: 8px 16px 60px 60px; }
-.hour-row { position: absolute; left: -60px; right: 0; border-top: 1px solid #edeef1; }
-.hour-row.half { border-top: 1px dashed var(--line-2); }
+.hour-row { position: absolute; left: -60px; right: 0; border-top: 1px solid var(--line); }
+.hour-row.half { border-top: 1px dashed var(--line); opacity: .55; }
 .hour-label { position: absolute; left: 0; top: -8px; width: 50px; text-align: right; font-size: 11px; color: #6b7280; font-weight: 500; font-variant-numeric: tabular-nums; }
 
 .ev { position: absolute; border-radius: 7px; overflow: hidden; padding: 3px 8px; }

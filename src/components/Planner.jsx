@@ -707,7 +707,10 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
         onDragLeave={(e) => { if (e.target === ref.current) setHint(null) }}
         onDrop={(e) => { e.preventDefault(); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(null); if (s) { try { onDropPayload(JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
         {hours.map((h) => (
-          <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom }}><span className="hour-label">{hourLabel(h)}</span></div>
+          <React.Fragment key={h}>
+            <div className="hour-row" style={{ top: (h - DAY_START) * zoom }}><span className="hour-label">{hourLabel(h)}</span></div>
+            {h + 30 < DAY_END && zoom > 1.2 && <div className="hour-row half" style={{ top: (h + 30 - DAY_START) * zoom }} />}
+          </React.Fragment>
         ))}
         {hover && !hint && !draggingId && (
           <div className="create-ghost" style={{ top: (hover.start - DAY_START) * zoom, height: (hover.end - hover.start) * zoom }}>
