@@ -23,6 +23,31 @@
   --r: 10px;
   --r-lg: 14px;
   --font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --input-bg: #ffffff;
+  --card: #ffffff;
+  --scroll: #d6d9df;
+  --scroll-hover: #c2c6cf;
+}
+
+/* Dark theme — applied when the OS prefers dark (and the user hasn't forced
+   light), or when they explicitly pick dark in Settings. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --accent: #4b8bff; --accent-weak: rgba(75,139,255,.16); --accent-ink: #9dc0ff;
+    --ink: #e7e9ee; --ink-2: #c3c8d3; --muted: #8b93a3; --faint: #646c7b;
+    --line: #2b303b; --line-2: #222732; --bg: #101319; --panel: #1a1e26; --panel-2: #20242e;
+    --danger: #f0616a; --ok: #35c98a;
+    --input-bg: #232833; --card: #232833; --scroll: #363c48; --scroll-hover: #454c5a;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.3); --shadow-md: 0 4px 14px rgba(0,0,0,.4); --shadow-lg: 0 16px 40px rgba(0,0,0,.55);
+  }
+}
+:root[data-theme='dark'] {
+  --accent: #4b8bff; --accent-weak: rgba(75,139,255,.16); --accent-ink: #9dc0ff;
+  --ink: #e7e9ee; --ink-2: #c3c8d3; --muted: #8b93a3; --faint: #646c7b;
+  --line: #2b303b; --line-2: #222732; --bg: #101319; --panel: #1a1e26; --panel-2: #20242e;
+  --danger: #f0616a; --ok: #35c98a;
+  --input-bg: #232833; --card: #232833; --scroll: #363c48; --scroll-hover: #454c5a;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.3); --shadow-md: 0 4px 14px rgba(0,0,0,.4); --shadow-lg: 0 16px 40px rgba(0,0,0,.55);
 }
 
 * { box-sizing: border-box; }
@@ -55,8 +80,8 @@ button:disabled, .btn.disabled, a.disabled { cursor: not-allowed; }
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
 }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #d6d9df; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
-::-webkit-scrollbar-thumb:hover { background: #c2c6cf; background-clip: content-box; }
+::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); background-clip: content-box; }
 
 /* ---- primitives ---- */
 .btn { border: 1px solid var(--line); background: var(--panel); border-radius: var(--r-sm); padding: 7px 12px; font-size: 13px; font-weight: 500; color: var(--ink-2); transition: background .12s, border-color .12s, box-shadow .12s; display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; }
@@ -73,7 +98,7 @@ button:disabled, .btn.disabled, a.disabled { cursor: not-allowed; }
 .link:hover { text-decoration: underline; }
 .link.danger { color: var(--danger); }
 
-.field { width: 100%; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 9px 11px; font-size: 14px; outline: none; background: #fff; transition: border-color .12s, box-shadow .12s; }
+.field { width: 100%; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 9px 11px; font-size: 14px; outline: none; background: var(--input-bg); transition: border-color .12s, box-shadow .12s; }
 .field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
 
 /* ---- loading / login ---- */
@@ -351,8 +376,8 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .hour-label { position: absolute; left: 0; top: -8px; width: 50px; text-align: right; font-size: 11px; color: #6b7280; font-weight: 500; font-variant-numeric: tabular-nums; }
 
 .ev { position: absolute; border-radius: 7px; overflow: hidden; padding: 3px 8px; }
-.ev-meeting { background: #fff; border: 1px solid #dfe3ea; border-left: 3px solid var(--accent); color: var(--ink-2); box-shadow: var(--shadow-sm); cursor: pointer; }
-.ev-meeting:hover { box-shadow: var(--shadow-md); border-color: #c6cdda; }
+.ev-meeting { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); color: var(--ink-2); box-shadow: var(--shadow-sm); cursor: pointer; }
+.ev-meeting:hover { box-shadow: var(--shadow-md); border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
 .ev-meeting .ev-title { color: var(--ink); }
 .ev-cam { position: absolute; top: 4px; right: 6px; color: var(--accent); opacity: .85; z-index: 2; }
 .ev-buffer { background: repeating-linear-gradient(45deg, rgba(230,124,0,.10), rgba(230,124,0,.10) 6px, rgba(230,124,0,.16) 6px, rgba(230,124,0,.16) 12px); border: 1px dashed rgba(214,120,10,.5); color: #a15c00; font-size: 11px; }

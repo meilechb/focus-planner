@@ -57,6 +57,12 @@ export default function Planner() {
   const [view, setView] = useState(() => readCache().view || 'day') // day | week | month
   const [zoom, setZoom] = useState(() => { const s = Number(localStorage.getItem(ZOOM_KEY)); return s ? Math.min(3, Math.max(1, s)) : defaultZoom() })
   const [now, setNow] = useState(() => nowMinutes(readCache().tz || DEFAULT_TZ))
+  const [theme, setTheme] = useState(() => localStorage.getItem('focus_theme') || 'system')
+  useEffect(() => {
+    const r = document.documentElement
+    if (theme === 'system') r.removeAttribute('data-theme'); else r.setAttribute('data-theme', theme)
+    try { localStorage.setItem('focus_theme', theme) } catch {}
+  }, [theme])
 
   const [taskFilter, setTaskFilter] = useState('all')
   const [taskSearch, setTaskSearch] = useState('')
@@ -573,6 +579,7 @@ export default function Planner() {
           navCfg={navCfg} onNavChange={updateNavCfg} groups={displayGroups} connected={connected} hasZoho={hasZoho}
           zoom={zoom} setZoom={setZoom} tz={tz} onChangeTz={(v) => { setTz(v); saveKey('timezone', v) }}
           focusHidden={focusHidden} setFocusHidden={setFocusHidden} remState={remState} onEnableReminders={enableReminders}
+          theme={theme} setTheme={setTheme}
           zohoErrors={zoho?.errors} onClose={() => setShowConn(false)} />
       )}
       {showHelp && <ShortcutsModal onClose={() => setShowHelp(false)} />}
@@ -1056,7 +1063,7 @@ function SettingsModal(props) {
   const {
     connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar,
     taskAccounts, selectedTaskLists, toggleTaskList, navCfg, onNavChange, groups, connected, hasZoho,
-    zoom, setZoom, tz, onChangeTz, focusHidden, setFocusHidden, remState, onEnableReminders, zohoErrors, onClose,
+    zoom, setZoom, tz, onChangeTz, focusHidden, setFocusHidden, remState, onEnableReminders, theme, setTheme, zohoErrors, onClose,
   } = props
   const googleHasTasks = connections.some((c) => c.provider === 'google' && (c.extra?.features || ['calendar', 'tasks']).includes('tasks'))
   const cats = [
@@ -1220,6 +1227,15 @@ function SettingsModal(props) {
             )}
 
             {tab === 'general' && (
+              <>
+              <div className="set-group">
+                <div className="set-group-title">Appearance</div>
+                <div className="seg cz-seg">
+                  {['system', 'light', 'dark'].map((t) => (
+                    <button key={t} className={'seg-btn' + (theme === t ? ' on' : '')} onClick={() => setTheme(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
+                  ))}
+                </div>
+              </div>
               <div className="set-group">
                 <div className="set-group-title">Time zone</div>
                 <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>All times and the current-time line use this zone.</div>
@@ -1227,6 +1243,7 @@ function SettingsModal(props) {
                   {tzList.map((z) => <option key={z} value={z}>{z.replace(/_/g, ' ')}</option>)}
                 </select>
               </div>
+              </>
             )}
 
           </div>
