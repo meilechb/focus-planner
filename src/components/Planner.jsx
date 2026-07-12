@@ -70,6 +70,7 @@ export default function Planner() {
   const [editBlock, setEditBlock] = useState(null) // { block, day }
   const [showConn, setShowConn] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [showCmd, setShowCmd] = useState(false)
   const [navCfg, setNavCfg] = useState(readNavCfg)
   const [viewEvent, setViewEvent] = useState(null) // a Google Calendar event to inspect
   function updateNavCfg(n) { setNavCfg(n); try { localStorage.setItem(NAVCFG_KEY, JSON.stringify(n)) } catch {} }
@@ -266,6 +267,9 @@ export default function Planner() {
   // keyboard shortcuts: T=today, D/W/M=views, ←/→=navigate
   useEffect(() => {
     function onKey(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault(); setShowCmd((v) => !v); return
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
         if (e.target.closest && e.target.closest('input, textarea')) return
         e.preventDefault(); undoBlocks(); return
@@ -293,7 +297,7 @@ export default function Planner() {
   useEffect(() => {
     function onEsc(e) {
       if (e.key !== 'Escape') return
-      setEditBlock(null); setEditProject(null); setShowConn(false); setShowHelp(false); setViewEvent(null)
+      setEditBlock(null); setEditProject(null); setShowConn(false); setShowHelp(false); setViewEvent(null); setShowCmd(false)
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
@@ -462,6 +466,7 @@ export default function Planner() {
 
   return (
     <div className={'app' + (sidebarOpen ? '' : ' sidebar-collapsed')}>
+      <div className="scrim" onClick={() => setSidebarOpen(false)} />
       <Sidebar
         projects={projects} onNewProject={newProject} onEditProject={setEditProject} onDeleteProject={deleteProject}
         favorites={favorites} isFav={isFav} toggleFav={toggleFav}
@@ -571,6 +576,19 @@ export default function Planner() {
           zohoErrors={zoho?.errors} onClose={() => setShowConn(false)} />
       )}
       {showHelp && <ShortcutsModal onClose={() => setShowHelp(false)} />}
+      {showCmd && <CommandPalette onClose={() => setShowCmd(false)} actions={[
+        { id: 'today', label: 'Go to Today', icon: 'calendar', hint: 'T', run: () => setViewDate(today) },
+        { id: 'day', label: 'Day view', icon: 'calendar', hint: 'D', run: () => setView('day') },
+        { id: 'week', label: 'Week view', icon: 'calendar', hint: 'W', run: () => setView('week') },
+        { id: 'month', label: 'Month view', icon: 'calendar', hint: 'M', run: () => setView('month') },
+        { id: 'prev', label: 'Previous', icon: 'chevronLeft', run: () => setViewDate((v) => (view === 'month' ? addMonths(v, -1) : addDays(v, view === 'week' ? -7 : -1))) },
+        { id: 'next', label: 'Next', icon: 'chevronRight', run: () => setViewDate((v) => (view === 'month' ? addMonths(v, 1) : addDays(v, view === 'week' ? 7 : 1))) },
+        { id: 'newproj', label: 'New project', icon: 'plus', run: newProject },
+        { id: 'focus', label: focusHidden ? 'Show focus card' : 'Hide focus card', icon: 'focus', run: () => setFocusHidden((h) => !h) },
+        { id: 'sidebar', label: sidebarOpen ? 'Hide sidebar' : 'Show sidebar', icon: 'sidebar', run: () => setSidebarOpen((v) => !v) },
+        { id: 'settings', label: 'Open Settings', icon: 'settings', run: () => setShowConn(true) },
+        { id: 'help', label: 'Keyboard shortcuts', icon: 'sliders', hint: '?', run: () => setShowHelp(true) },
+      ]} />}
       {viewEvent && <EventModal event={viewEvent} onClose={() => setViewEvent(null)} />}
     </div>
   )
@@ -1224,6 +1242,41 @@ function ProjectModal({ project, onSave, onClose, onDelete }) {
           {!p.isNew && <button className="link danger" onClick={() => { onDelete(p.id); onClose() }}>Delete</button>}
           <div className="spacer" /><button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" onClick={save} disabled={!p.name.trim()}>{p.isNew ? 'Create' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ⌘K command palette — fuzzy-ish filter over app actions.
+function CommandPalette({ actions, onClose }) {
+  const [q, setQ] = useState('')
+  const [sel, setSel] = useState(0)
+  const list = actions.filter((a) => a.label.toLowerCase().includes(q.trim().toLowerCase()))
+  const clamped = Math.min(sel, Math.max(0, list.length - 1))
+  const choose = (a) => { if (a) { a.run(); onClose() } }
+  return (
+    <div className="modal-backdrop cmd-backdrop" onClick={onClose}>
+      <div className="cmd-modal" onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => Math.min(list.length - 1, s + 1)) }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => Math.max(0, s - 1)) }
+          else if (e.key === 'Enter') { e.preventDefault(); choose(list[clamped]) }
+        }}>
+        <div className="cmd-search">
+          <Icon name="search" size={17} />
+          <input className="cmd-input" autoFocus placeholder="Type a command or search…" value={q} onChange={(e) => { setQ(e.target.value); setSel(0) }} />
+          <kbd className="kbd">esc</kbd>
+        </div>
+        <div className="cmd-list">
+          {list.length === 0 && <div className="cmd-empty">No matching commands</div>}
+          {list.map((a, i) => (
+            <button key={a.id} className={'cmd-item' + (i === clamped ? ' on' : '')} onMouseEnter={() => setSel(i)} onClick={() => choose(a)}>
+              <span className="cmd-item-ic"><Icon name={a.icon} size={16} /></span>
+              <span className="cmd-item-label">{a.label}</span>
+              {a.hint && <kbd className="kbd">{a.hint}</kbd>}
+            </button>
+          ))}
         </div>
       </div>
     </div>
