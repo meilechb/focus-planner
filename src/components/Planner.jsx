@@ -3,13 +3,15 @@ import { api } from '../lib/api.js'
 import { MOCK_MEETINGS, MOCK_TASK_GROUPS } from '../lib/mock.js'
 import {
   PALETTE, DAY_START, DAY_END, SNAP_MIN, ACCENT,
-  isoDate, addDays, weekDays, label, labelShort, snap, clamp, uuid,
-  buffersFrom, computeFocus, nowMinutes, localDateISO,
+  isoDate, addDays, startOfWeek, weekDays, monthGridDays, monthOf, dayNum,
+  label, labelShort, snap, clamp, uuid, buffersFrom, computeFocus, nowMinutes, localDateISO,
 } from '../lib/lib.js'
 import FocusCard from './FocusCard.jsx'
 
 const DEFAULT_TZ = 'America/New_York'
-const ck = (connId, id) => `${connId}::${id}` // composite key for multi-account
+const ZOOM_KEY = 'focus_zoom'
+const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+const timeToMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m }
 
 export default function Planner() {
   const [tz, setTz] = useState(DEFAULT_TZ)
@@ -19,30 +21,36 @@ export default function Planner() {
   const [storageOk, setStorageOk] = useState(true)
   const [banner, setBanner] = useState('')
 
-  // google data
-  const [calAccounts, setCalAccounts] = useState([]) // [{connId,email,calendars[]}]
-  const [taskAccounts, setTaskAccounts] = useState([]) // [{connId,email,lists[]}]
-  const [selectedCalendars, setSelectedCalendars] = useState([]) // ["connId::calId"]
-  const [selectedTaskLists, setSelectedTaskLists] = useState([]) // ["connId::listId"]
-  const [events, setEvents] = useState([]) // for viewDate
-  const [gtasks, setGtasks] = useState([]) // flat [{...,connId,listId}]
+  const [calAccounts, setCalAccounts] = useState([])
+  const [taskAccounts, setTaskAccounts] = useState([])
+  const [selectedCalendars, setSelectedCalendars] = useState([])
+  const [selectedTaskLists, setSelectedTaskLists] = useState([])
+  const [rangeEvents, setRangeEvents] = useState([]) // events across the visible range, each with .date
+  const [todayEvents, setTodayEvents] = useState([]) // events for today (drives the focus card)
+  const [gtasks, setGtasks] = useState([])
   const [zoho, setZoho] = useState({ crm: { deals: [], leads: [] }, projects: [], errors: [] })
 
   const [viewDate, setViewDate] = useState(() => isoDate(new Date(), DEFAULT_TZ))
-  const [view, setView] = useState('day')
-  const [zoom] = useState(1.6)
+  const [view, setView] = useState('day') // day | week | month
+  const [zoom, setZoom] = useState(() => Number(localStorage.getItem(ZOOM_KEY)) || 1.3)
   const [now, setNow] = useState(() => nowMinutes(DEFAULT_TZ))
 
   const [taskFilter, setTaskFilter] = useState('all')
+  const [taskSearch, setTaskSearch] = useState('')
   const [collapsed, setCollapsed] = useState({})
-  const [showCalPicker, setShowCalPicker] = useState(false)
+  const [sections, setSections] = useState({ projects: false, tasks: false })
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [focusHidden, setFocusHidden] = useState(false)
   const [overrideBlockId, setOverrideBlockId] = useState(null)
   const [editProject, setEditProject] = useState(null)
+  const [editBlock, setEditBlock] = useState(null) // { block, day }
+  const [showConn, setShowConn] = useState(false)
 
   const today = isoDate(new Date(), tz)
   const connected = connections.some((c) => c.provider === 'google')
   const hasZoho = connections.some((c) => c.provider === 'zoho')
+
+  useEffect(() => { localStorage.setItem(ZOOM_KEY, String(zoom)) }, [zoom])
 
   // --- boot -----------------------------------------------------------------
   useEffect(() => {
@@ -57,23 +65,11 @@ export default function Planner() {
         setSelectedCalendars(state.selectedCalendars || [])
         setSelectedTaskLists(state.selectedTaskLists || [])
         setStorageOk(true)
-      } catch {
-        setStorageOk(false)
-      }
+      } catch { setStorageOk(false) }
       let conns = []
-      try {
-        const r = await api.get('/api/connections')
-        conns = r.connections || []
-        setConnections(conns)
-      } catch {}
-
-      if (conns.some((c) => c.provider === 'google')) {
-        await loadGoogleMeta(state)
-      }
-      if (conns.some((c) => c.provider === 'zoho')) {
-        loadZoho()
-      }
-
+      try { conns = (await api.get('/api/connections')).connections || []; setConnections(conns) } catch {}
+      if (conns.some((c) => c.provider === 'google')) await loadGoogleMeta(state)
+      if (conns.some((c) => c.provider === 'zoho')) loadZoho()
       const p = new URLSearchParams(location.search)
       if (p.get('connected')) {
         const st = p.get('status')
@@ -92,379 +88,216 @@ export default function Planner() {
       ])
       setCalAccounts(cal.accounts || [])
       setTaskAccounts(tl.accounts || [])
-
-      // First run: nothing selected yet -> select everything.
-      const hadCals = (state?.selectedCalendars || []).length > 0
-      const hadLists = (state?.selectedTaskLists || []).length > 0
-      if (!hadCals) {
-        const all = (cal.accounts || []).flatMap((a) => a.calendars.map((c) => ck(a.connId, c.id)))
-        setSelectedCalendars(all)
-        saveKey('selectedCalendars', all)
+      if (!(state?.selectedCalendars || []).length) {
+        const all = (cal.accounts || []).flatMap((a) => a.calendars.map((c) => `${a.connId}::${c.id}`))
+        setSelectedCalendars(all); saveKey('selectedCalendars', all)
       }
-      if (!hadLists) {
-        const all = (tl.accounts || []).flatMap((a) => a.lists.map((l) => ck(a.connId, l.id)))
-        setSelectedTaskLists(all)
-        saveKey('selectedTaskLists', all)
+      if (!(state?.selectedTaskLists || []).length) {
+        const all = (tl.accounts || []).flatMap((a) => a.lists.map((l) => `${a.connId}::${l.id}`))
+        setSelectedTaskLists(all); saveKey('selectedTaskLists', all)
       }
-    } catch (e) {
-      console.error('google meta load failed', e)
-    }
+    } catch (e) { console.error('google meta', e) }
   }
-
   async function loadZoho() {
-    try {
-      const r = await api.post('/api/zoho/data', { action: 'fetch' })
-      setZoho(r)
-    } catch (e) {
-      console.error('zoho load failed', e)
-    }
+    try { setZoho(await api.post('/api/zoho/data', { action: 'fetch' })) } catch (e) { console.error('zoho', e) }
   }
-
   async function disconnect(id) {
     await api.del('/api/connections?id=' + id).catch(() => {})
-    const r = await api.get('/api/connections').catch(() => ({ connections: [] }))
-    setConnections(r.connections || [])
+    setConnections((await api.get('/api/connections').catch(() => ({ connections: [] }))).connections || [])
   }
 
-  // --- fetch events when day / calendar selection changes -------------------
-  useEffect(() => {
-    if (!connected || selectedCalendars.length === 0) {
-      setEvents([])
-      return
-    }
-    const byConn = {}
-    for (const key of selectedCalendars) {
-      const [connId, calId] = key.split('::')
-      ;(byConn[connId] ||= []).push(calId)
-    }
-    const cals = Object.entries(byConn).map(([connId, calendarIds]) => ({ connId, calendarIds }))
-    let alive = true
-    api.post('/api/google/data', { action: 'events', dateISO: viewDate, cals })
-      .then((r) => alive && setEvents(r.events || []))
-      .catch(() => alive && setEvents([]))
-    return () => { alive = false }
-  }, [connected, selectedCalendars, viewDate])
+  // --- visible range for the grid ------------------------------------------
+  const range = useMemo(() => {
+    if (view === 'day') return { start: viewDate, end: viewDate }
+    if (view === 'week') { const d = weekDays(viewDate); return { start: d[0], end: d[6] } }
+    const g = monthGridDays(viewDate); return { start: g[0], end: g[41] }
+  }, [view, viewDate])
 
-  // --- fetch tasks when list selection changes ------------------------------
+  function calsPayload() {
+    const byConn = {}
+    for (const key of selectedCalendars) { const [c, id] = key.split('::'); (byConn[c] ||= []).push(id) }
+    return Object.entries(byConn).map(([connId, calendarIds]) => ({ connId, calendarIds }))
+  }
+
   useEffect(() => {
-    if (!connected || selectedTaskLists.length === 0) {
-      setGtasks([])
-      return
-    }
-    const lists = selectedTaskLists.map((key) => {
-      const [connId, listId] = key.split('::')
-      return { connId, listId }
-    })
+    if (!connected || !selectedCalendars.length) { setRangeEvents([]); return }
+    let alive = true
+    api.post('/api/google/data', { action: 'eventsRange', startISO: range.start, endISO: range.end, cals: calsPayload() })
+      .then((r) => alive && setRangeEvents(r.events || [])).catch(() => alive && setRangeEvents([]))
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, selectedCalendars, range.start, range.end])
+
+  useEffect(() => {
+    if (!connected || !selectedCalendars.length) { setTodayEvents([]); return }
+    let alive = true
+    api.post('/api/google/data', { action: 'eventsRange', startISO: today, endISO: today, cals: calsPayload() })
+      .then((r) => alive && setTodayEvents(r.events || [])).catch(() => alive && setTodayEvents([]))
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, selectedCalendars, today])
+
+  useEffect(() => {
+    if (!connected || !selectedTaskLists.length) { setGtasks([]); return }
+    const lists = selectedTaskLists.map((k) => { const [connId, listId] = k.split('::'); return { connId, listId } })
     let alive = true
     api.post('/api/google/data', { action: 'tasks', lists })
-      .then((r) => alive && setGtasks(r.tasks || []))
-      .catch(() => alive && setGtasks([]))
+      .then((r) => alive && setGtasks(r.tasks || [])).catch(() => alive && setGtasks([]))
     return () => { alive = false }
   }, [connected, selectedTaskLists])
 
-  // --- live clock -----------------------------------------------------------
-  useEffect(() => {
-    const id = setInterval(() => setNow(nowMinutes(tz)), 30000)
-    setNow(nowMinutes(tz))
-    return () => clearInterval(id)
-  }, [tz])
+  useEffect(() => { const id = setInterval(() => setNow(nowMinutes(tz)), 30000); setNow(nowMinutes(tz)); return () => clearInterval(id) }, [tz])
 
-  // --- debounced, serialized saver -----------------------------------------
-  const pending = useRef(new Map())
-  const timer = useRef(null)
-  const flushing = useRef(false)
-  function saveKey(key, value) {
-    if (!storageOk) return
-    pending.current.set(key, value)
-    clearTimeout(timer.current)
-    timer.current = setTimeout(flush, 400)
-  }
+  // --- persistence ----------------------------------------------------------
+  const pending = useRef(new Map()); const timer = useRef(null); const flushing = useRef(false)
+  function saveKey(key, value) { if (!storageOk) return; pending.current.set(key, value); clearTimeout(timer.current); timer.current = setTimeout(flush, 400) }
   async function flush() {
-    if (flushing.current) return
-    flushing.current = true
+    if (flushing.current) return; flushing.current = true
     try {
       while (pending.current.size) {
         const [key, value] = pending.current.entries().next().value
         pending.current.delete(key)
-        try {
-          await api.post('/api/data', { key, value })
-        } catch {
-          setStorageOk(false)
-        }
+        try { await api.post('/api/data', { key, value }) } catch { setStorageOk(false) }
       }
-    } finally {
-      flushing.current = false
-    }
+    } finally { flushing.current = false }
   }
 
-  // --- mutations ------------------------------------------------------------
-  function updateProjects(next) { setProjects(next); saveKey('projects', next) }
-  function updateBlocks(next) { setBlocks(next); saveKey('blocks', next) }
-  function setDayBlocks(iso, list) { updateBlocks({ ...blocks, [iso]: list }) }
-  const dayBlocks = blocks[viewDate] || []
+  function updateProjects(n) { setProjects(n); saveKey('projects', n) }
+  function updateBlocks(n) { setBlocks(n); saveKey('blocks', n) }
+  const dayBlocks = (d) => blocks[d] || []
+  function setDayBlocks(d, list) { updateBlocks({ ...blocks, [d]: list }) }
+  function addBlockTo(d, b) { updateBlocks({ ...blocks, [d]: [...(blocks[d] || []), b] }) }
+  function updateBlock(d, b) { updateBlocks({ ...blocks, [d]: (blocks[d] || []).map((x) => (x.id === b.id ? b : x)) }) }
+  function deleteBlock(d, id) { updateBlocks({ ...blocks, [d]: (blocks[d] || []).filter((x) => x.id !== id) }) }
 
-  function addProject(name) {
-    updateProjects([...projects, { id: uuid(), name, color: PALETTE[projects.length % PALETTE.length], note: '' }])
-  }
+  function addProject(name) { updateProjects([...projects, { id: uuid(), name, color: PALETTE[projects.length % PALETTE.length], note: '' }]) }
   function saveProject(p) { updateProjects(projects.map((x) => (x.id === p.id ? p : x))); setEditProject(null) }
   function deleteProject(id) { updateProjects(projects.filter((x) => x.id !== id)) }
 
-  function toggleCalendar(key) {
-    const next = selectedCalendars.includes(key)
-      ? selectedCalendars.filter((k) => k !== key)
-      : [...selectedCalendars, key]
-    setSelectedCalendars(next); saveKey('selectedCalendars', next)
-  }
-  function toggleTaskList(key) {
-    const next = selectedTaskLists.includes(key)
-      ? selectedTaskLists.filter((k) => k !== key)
-      : [...selectedTaskLists, key]
-    setSelectedTaskLists(next); saveKey('selectedTaskLists', next)
-  }
+  function toggleCalendar(k) { const n = selectedCalendars.includes(k) ? selectedCalendars.filter((x) => x !== k) : [...selectedCalendars, k]; setSelectedCalendars(n); saveKey('selectedCalendars', n) }
+  function toggleTaskList(k) { const n = selectedTaskLists.includes(k) ? selectedTaskLists.filter((x) => x !== k) : [...selectedTaskLists, k]; setSelectedTaskLists(n); saveKey('selectedTaskLists', n) }
 
-  // --- meetings + buffers ---------------------------------------------------
-  const meetings = useMemo(() => {
-    if (connected) return events
-    return viewDate === today ? MOCK_MEETINGS : []
-  }, [connected, events, viewDate, today])
-  const buffers = useMemo(() => buffersFrom(meetings), [meetings])
+  const meetingsFor = (d) => (connected ? rangeEvents.filter((e) => e.date === d) : (d === today ? MOCK_MEETINGS : []))
 
-  // --- task groups (real when connected, else demo) -------------------------
+  // --- task groups ----------------------------------------------------------
   const displayGroups = useMemo(() => {
-    const passesFilter = (t) => taskFilter === 'all' || (t.due && localDateISO(t.due, tz) === viewDate)
+    const q = taskSearch.trim().toLowerCase()
+    const dueOk = (t) => taskFilter === 'all' || (t.due && localDateISO(t.due, tz) === viewDate)
+    const searchOk = (t) => !q || (t.title || '').toLowerCase().includes(q) || (t.sub || '').toLowerCase().includes(q)
     const groups = []
-
     if (!connected && !hasZoho) {
-      for (const g of MOCK_TASK_GROUPS) {
-        groups.push({ ...g, lists: g.lists.map((l) => ({ ...l, tasks: l.tasks.filter(passesFilter) })) })
-      }
+      for (const g of MOCK_TASK_GROUPS) groups.push({ ...g, lists: g.lists.map((l) => ({ ...l, tasks: l.tasks.filter(dueOk).filter(searchOk) })) })
     }
-
     if (connected) {
-      for (const a of taskAccounts) {
-        groups.push({
-          id: a.connId,
-          account: a.email || 'Google',
-          lists: a.lists.map((l) => ({
-            id: l.id,
-            title: l.title,
-            tasks: gtasks
-              .filter((t) => t.connId === a.connId && t.listId === l.id)
-              .filter(passesFilter)
-              .map((t) => ({ ...t, source: 'google' })),
-          })),
-        })
-      }
+      for (const a of taskAccounts) groups.push({
+        id: a.connId, account: a.email || 'Google',
+        lists: a.lists.map((l) => ({ id: l.id, title: l.title, tasks: gtasks.filter((t) => t.connId === a.connId && t.listId === l.id).filter(dueOk).filter(searchOk).map((t) => ({ ...t, source: 'google' })) })),
+      })
     }
-
-    // Zoho (no due dates -> not affected by the Today filter)
     if (hasZoho) {
       const crmLists = []
-      if (zoho.crm.deals.length) {
-        crmLists.push({ id: 'deals', title: 'Deals', tasks: zoho.crm.deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })) })
-      }
-      if (zoho.crm.leads.length) {
-        crmLists.push({ id: 'leads', title: 'Leads', tasks: zoho.crm.leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })) })
-      }
+      if (zoho.crm.deals.length) crmLists.push({ id: 'deals', title: 'Deals', tasks: zoho.crm.deals.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })).filter(searchOk) })
+      if (zoho.crm.leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: zoho.crm.leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', source: 'zoho' })).filter(searchOk) })
       if (crmLists.length) groups.push({ id: 'zoho-crm', account: 'Zoho CRM', lists: crmLists })
-      if (zoho.projects.length) {
-        groups.push({
-          id: 'zoho-projects',
-          account: 'Zoho Projects',
-          lists: zoho.projects.map((p) => ({ id: p.id, title: p.name, tasks: p.tasks.map((t) => ({ ...t, source: 'zoho' })) })),
-        })
-      }
+      if (zoho.projects.length) groups.push({ id: 'zoho-projects', account: 'Zoho Projects', lists: zoho.projects.map((p) => ({ id: p.id, title: p.name, tasks: p.tasks.map((t) => ({ ...t, source: 'zoho' })).filter(searchOk) })) })
     }
-
     return groups
-  }, [connected, hasZoho, taskAccounts, gtasks, zoho, taskFilter, tz, viewDate])
+  }, [connected, hasZoho, taskAccounts, gtasks, zoho, taskFilter, taskSearch, tz, viewDate])
 
   // --- focus ----------------------------------------------------------------
   const focus = useMemo(() => {
     const todays = blocks[today] || []
-    if (overrideBlockId) {
-      const b = todays.find((x) => x.id === overrideBlockId)
-      if (b) return computeFocus({ blocks: [b], meetings: [], buffers: [], now: b.start, projects })
-    }
-    const todaysMeetings = connected ? (viewDate === today ? events : []) : (viewDate === today ? MOCK_MEETINGS : [])
-    return computeFocus({ blocks: todays, meetings: todaysMeetings, buffers: buffersFrom(todaysMeetings), now, projects })
-  }, [blocks, today, overrideBlockId, connected, events, now, projects, viewDate])
+    if (overrideBlockId) { const b = todays.find((x) => x.id === overrideBlockId); if (b) return computeFocus({ blocks: [b], meetings: [], buffers: [], now: b.start, projects }) }
+    const m = connected ? todayEvents : (MOCK_MEETINGS)
+    return computeFocus({ blocks: todays, meetings: m, buffers: buffersFrom(m), now, projects })
+  }, [blocks, today, overrideBlockId, connected, todayEvents, now, projects])
 
   function advanceToNext() {
     const todays = [...(blocks[today] || [])].sort((a, b) => a.start - b.start)
     const ref = overrideBlockId ? todays.find((b) => b.id === overrideBlockId)?.start ?? now : now
     const next = todays.find((b) => b.start > ref)
-    if (next) setOverrideBlockId(next.id) // does NOT touch the current block's tasks
+    if (next) setOverrideBlockId(next.id)
   }
-
   function applyTaskCompletion(task, completed) {
     const { connId, listId, id: taskId, source } = task
     const status = completed ? 'completed' : 'needsAction'
-    // 1: blocks
     const next = { ...blocks }
-    for (const iso of Object.keys(next)) {
-      next[iso] = next[iso].map((b) =>
-        Array.isArray(b.tasks)
-          ? { ...b, tasks: b.tasks.map((t) => (t.id === taskId ? { ...t, status } : t)) }
-          : b,
-      )
-    }
+    for (const iso of Object.keys(next)) next[iso] = next[iso].map((b) => (Array.isArray(b.tasks) ? { ...b, tasks: b.tasks.map((t) => (t.id === taskId ? { ...t, status } : t)) } : b))
     updateBlocks(next)
-    // 2 + 3: only Google is read/write. Zoho is read-only — tick it locally only.
     if (source === 'google') {
       setGtasks((cur) => (completed ? cur.filter((t) => t.id !== taskId) : cur.map((t) => (t.id === taskId ? { ...t, status } : t))))
       api.post('/api/google/data', { action: 'complete', connId, listId, taskId, completed }).catch(() => {})
     }
   }
 
-  // --- drop from sidebar ----------------------------------------------------
-  const gridRef = useRef(null)
-  function yToMin(clientY) {
-    const rect = gridRef.current.getBoundingClientRect()
-    return clamp(snap(DAY_START + (clientY - rect.top) / zoom), DAY_START, DAY_END - SNAP_MIN)
-  }
-  function onDrop(e) {
-    e.preventDefault()
-    let payload
-    try { payload = JSON.parse(e.dataTransfer.getData('application/json')) } catch { return }
-    const start = yToMin(e.clientY)
-    if (payload.kind === 'project') {
-      addBlock({ id: uuid(), start, end: Math.min(start + 60, DAY_END), projectId: payload.projectId })
-    } else if (payload.kind === 'task') {
-      addBlock({ id: uuid(), start, end: Math.min(start + 30, DAY_END), tasks: [payload.task] })
-    } else if (payload.kind === 'batch') {
-      const dur = clamp(payload.tasks.length * 30, 30, 240)
-      addBlock({ id: uuid(), start, end: Math.min(start + dur, DAY_END), title: payload.title, color: '#039BE5', tasks: payload.tasks })
-    }
-  }
-  function addBlock(b) { setDayBlocks(viewDate, [...dayBlocks, b]) }
-  function deleteBlock(id) { setDayBlocks(viewDate, dayBlocks.filter((b) => b.id !== id)) }
-
-  // --- block drag / resize --------------------------------------------------
-  const blockDrag = useRef(null)
-  function onBlockPointerDown(e, block, mode) {
-    e.stopPropagation(); e.preventDefault()
-    blockDrag.current = { id: block.id, mode, startY: e.clientY, orig: { ...block } }
-    window.addEventListener('pointermove', onBlockPointerMove)
-    window.addEventListener('pointerup', onBlockPointerUp)
-  }
-  function onBlockPointerMove(e) {
-    const d = blockDrag.current
-    if (!d) return
-    const dMin = snap((e.clientY - d.startY) / zoom)
-    setDayBlocks(
-      viewDate,
-      (blocks[viewDate] || []).map((b) => {
-        if (b.id !== d.id) return b
-        if (d.mode === 'move') {
-          const len = d.orig.end - d.orig.start
-          const start = clamp(d.orig.start + dMin, DAY_START, DAY_END - len)
-          return { ...b, start, end: start + len }
-        }
-        return { ...b, end: clamp(d.orig.end + dMin, d.orig.start + SNAP_MIN, DAY_END) }
-      }),
-    )
-  }
-  function onBlockPointerUp() {
-    blockDrag.current = null
-    window.removeEventListener('pointermove', onBlockPointerMove)
-    window.removeEventListener('pointerup', onBlockPointerUp)
-    saveKey('blocks', blocks)
+  // --- create a block from a drop payload ----------------------------------
+  function blockFromPayload(payload, start) {
+    if (payload.kind === 'project') return { id: uuid(), start, end: Math.min(start + 60, DAY_END), projectId: payload.projectId }
+    if (payload.kind === 'task') return { id: uuid(), start, end: Math.min(start + 30, DAY_END), tasks: [payload.task] }
+    if (payload.kind === 'batch') { const dur = clamp(payload.tasks.length * 30, 30, 240); return { id: uuid(), start, end: Math.min(start + dur, DAY_END), title: payload.title, color: '#2563eb', tasks: payload.tasks } }
+    return null
   }
 
   // --- reminders ------------------------------------------------------------
   const [remState, setRemState] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported')
   function enableReminders() {
     if (typeof Notification === 'undefined') return
-    Notification.requestPermission().then((p) => { setRemState(p); if (p === 'granted') scheduleReminders() })
-  }
-  function scheduleReminders() {
-    const cur = nowMinutes(tz)
-    for (const b of blocks[today] || []) {
-      const delay = (b.start - cur) * 60000
-      if (delay <= 0 || delay > 12 * 3600000) continue
-      const name = b.title || projects.find((p) => p.id === b.projectId)?.name || 'Focus block'
-      setTimeout(() => new Notification('Focus Planner', { body: `${label(b.start)} — ${name}` }), delay)
-    }
+    Notification.requestPermission().then((p) => { setRemState(p); if (p === 'granted') {
+      const cur = nowMinutes(tz)
+      for (const b of blocks[today] || []) { const delay = (b.start - cur) * 60000; if (delay <= 0 || delay > 12 * 3600000) continue; const name = b.title || projects.find((x) => x.id === b.projectId)?.name || 'Focus block'; setTimeout(() => new Notification('Focus Planner', { body: `${label(b.start)} — ${name}` }), delay) }
+    } })
   }
 
-  // --- render ---------------------------------------------------------------
-  const gridHeight = (DAY_END - DAY_START) * zoom
-  const hours = []
-  for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
+  const blockColor = (b) => b.color || projects.find((p) => p.id === b.projectId)?.color || '#0b8043'
+  const blockName = (b) => b.title || projects.find((p) => p.id === b.projectId)?.name || (b.tasks?.length === 1 ? b.tasks[0].title : `${b.tasks?.length || 0} tasks`)
 
   return (
-    <div className="app">
+    <div className={'app' + (sidebarOpen ? '' : ' sidebar-collapsed')}>
       <Sidebar
         projects={projects} onAddProject={addProject} onEditProject={setEditProject} onDeleteProject={deleteProject}
-        connected={connected} groups={displayGroups}
-        taskFilter={taskFilter} setTaskFilter={setTaskFilter}
-        collapsed={collapsed} setCollapsed={setCollapsed}
-        connections={connections} onDisconnect={disconnect}
-        calAccounts={calAccounts} selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
-        showCalPicker={showCalPicker} setShowCalPicker={setShowCalPicker}
+        connected={connected} hasZoho={hasZoho} groups={displayGroups}
+        taskFilter={taskFilter} setTaskFilter={setTaskFilter} taskSearch={taskSearch} setTaskSearch={setTaskSearch}
+        collapsed={collapsed} setCollapsed={setCollapsed} sections={sections} setSections={setSections}
+        connections={connections} onOpenConnections={() => setShowConn(true)}
         remState={remState} onEnableReminders={enableReminders}
       />
 
       <main className="main">
-        <Toolbar view={view} setView={setView} viewDate={viewDate} setViewDate={setViewDate} today={today} />
-        {!storageOk && (
-          <div className="warn-banner">Not connected to storage — changes are in-memory only. Finish Vercel Blob + login setup (Phase 1–2) to persist.</div>
+        <TopBar
+          view={view} setView={setView} viewDate={viewDate} setViewDate={setViewDate} today={today}
+          zoom={zoom} setZoom={setZoom} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)}
+        />
+        {!storageOk && <div className="banner warn">Storage not reachable — changes are in-memory only.</div>}
+        {banner && <div className="banner ok">{banner}<button className="icon-btn x" onClick={() => setBanner('')}>×</button></div>}
+
+        {view === 'day' && (
+          <DayGrid
+            day={viewDate} today={today} now={now} zoom={zoom}
+            blocks={dayBlocks(viewDate)} meetings={meetingsFor(viewDate)} projects={projects}
+            blockColor={blockColor} blockName={blockName}
+            onCommit={(list) => setDayBlocks(viewDate, list)}
+            onEdit={(b) => setEditBlock({ block: b, day: viewDate })}
+            onDelete={(id) => deleteBlock(viewDate, id)}
+            onCreateAt={(min) => { const b = { id: uuid(), start: min, end: Math.min(min + 30, DAY_END), title: 'Focus', color: ACCENT, tasks: [] }; addBlockTo(viewDate, b); setEditBlock({ block: b, day: viewDate }) }}
+            onDropPayload={(payload, min) => { const b = blockFromPayload(payload, min); if (b) addBlockTo(viewDate, b) }}
+          />
         )}
-        {banner && <div className="ok-banner">{banner}</div>}
-
-        {view === 'day' ? (
-          <div className="grid-scroll">
-            <div className="grid" ref={gridRef} style={{ height: gridHeight }} onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
-              {hours.map((h) => (
-                <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom }}>
-                  <span className="hour-label">{labelShort(h)}</span>
-                </div>
-              ))}
-
-              {buffers.map((b, i) => (
-                <div key={'buf' + i} className="ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom }}>
-                  Prep · {b.forTitle}
-                </div>
-              ))}
-
-              {meetings.map((m) => (
-                <div key={m.id} className="ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom }}>
-                  <div className="ev-title">{m.title}</div>
-                  <div className="ev-time">{label(m.start)}–{label(m.end)}</div>
-                </div>
-              ))}
-
-              {dayBlocks.map((b) => {
-                const proj = projects.find((p) => p.id === b.projectId)
-                const color = b.color || proj?.color || '#0B8043'
-                const name = b.title || proj?.name || (b.tasks?.length === 1 ? b.tasks[0].title : `${b.tasks?.length || 0} tasks`)
-                return (
-                  <div key={b.id} className="ev-block" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, background: color }}
-                    onPointerDown={(e) => onBlockPointerDown(e, b, 'move')}>
-                    <button className="ev-del" title="Delete" onPointerDown={(e) => e.stopPropagation()} onClick={() => deleteBlock(b.id)}>×</button>
-                    <div className="ev-title">{name}</div>
-                    <div className="ev-time">{label(b.start)}–{label(b.end)}</div>
-                    {Array.isArray(b.tasks) && b.tasks.length > 0 && (
-                      <div className="ev-tasklist">
-                        {b.tasks.map((t) => (
-                          <div key={t.id} className={'ev-task' + (t.status === 'completed' ? ' done' : '')}>• {t.title}</div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="ev-resize" onPointerDown={(e) => onBlockPointerDown(e, b, 'resize')} />
-                  </div>
-                )
-              })}
-
-              {viewDate === today && now >= DAY_START && now <= DAY_END && (
-                <div className="now-line" style={{ top: (now - DAY_START) * zoom }}><span className="now-dot" /></div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <WeekView viewDate={viewDate} blocks={blocks} projects={projects} today={today}
-            onPickDay={(d) => { setViewDate(d); setView('day') }} />
+        {view === 'week' && (
+          <WeekGrid
+            viewDate={viewDate} today={today} now={now} zoom={zoom} projects={projects}
+            blocksByDay={blocks} meetingsFor={meetingsFor} blockColor={blockColor} blockName={blockName}
+            onOpenDay={(d) => { setViewDate(d); setView('day') }}
+            onEdit={(b, d) => setEditBlock({ block: b, day: d })}
+            onCreateAt={(d, min) => { const b = { id: uuid(), start: min, end: Math.min(min + 30, DAY_END), title: 'Focus', color: ACCENT, tasks: [] }; addBlockTo(d, b); setEditBlock({ block: b, day: d }) }}
+            onDropPayload={(d, payload, min) => { const b = blockFromPayload(payload, min); if (b) addBlockTo(d, b) }}
+          />
+        )}
+        {view === 'month' && (
+          <MonthGrid
+            viewDate={viewDate} today={today} blocksByDay={blocks} meetingsFor={meetingsFor}
+            blockColor={blockColor} blockName={blockName}
+            onOpenDay={(d) => { setViewDate(d); setView('day') }}
+          />
         )}
       </main>
 
@@ -473,96 +306,260 @@ export default function Planner() {
           onToggleTask={(t) => applyTaskCompletion(t, t.status !== 'completed')}
           onNext={advanceToNext} onHide={() => setFocusHidden(true)} />
       )}
-      {focusHidden && <button className="focus-show" onClick={() => setFocusHidden(false)}>Show focus</button>}
+      {focusHidden && <button className="focus-show" onClick={() => setFocusHidden(false)}>Focus</button>}
 
       {editProject && <ProjectModal project={editProject} onSave={saveProject} onClose={() => setEditProject(null)} onDelete={deleteProject} />}
+      {editBlock && (
+        <BlockModal entry={editBlock} projects={projects}
+          onSave={(b) => { updateBlock(editBlock.day, b); setEditBlock(null) }}
+          onDelete={() => { deleteBlock(editBlock.day, editBlock.block.id); setEditBlock(null) }}
+          onClose={() => setEditBlock(null)} />
+      )}
+      {showConn && (
+        <ConnectionsModal connections={connections} onDisconnect={disconnect}
+          calAccounts={calAccounts} selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
+          onClose={() => setShowConn(false)} />
+      )}
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
+/* ========================================================================== */
 
-function Toolbar({ view, setView, viewDate, setViewDate, today }) {
+function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, sidebarOpen, onToggleSidebar }) {
+  const step = view === 'week' ? 7 : view === 'month' ? 30 : 1
   const d = new Date(viewDate + 'T12:00:00')
-  const long = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+  let title
+  if (view === 'month') title = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  else if (view === 'week') { const w = weekDays(viewDate); const a = new Date(w[0] + 'T12:00:00'); const b = new Date(w[6] + 'T12:00:00'); title = `${a.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${b.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` }
+  else title = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+  const gotoMonth = (n) => { const nd = new Date(d); nd.setMonth(nd.getMonth() + n); setViewDate(nd.toISOString().slice(0, 10)) }
   return (
-    <div className="toolbar">
-      <button className="pill" onClick={() => setViewDate(today)}>Today</button>
-      <button className="pill-icon" onClick={() => setViewDate(addDays(viewDate, view === 'week' ? -7 : -1))}>‹</button>
-      <button className="pill-icon" onClick={() => setViewDate(addDays(viewDate, view === 'week' ? 7 : 1))}>›</button>
-      <span className="toolbar-date">{long}</span>
-      <div className="toolbar-spacer" />
+    <div className="topbar">
+      <button className="icon-btn" title="Toggle sidebar" onClick={onToggleSidebar}>{sidebarOpen ? '⟨' : '☰'}</button>
+      <button className="btn" onClick={() => setViewDate(today)}>Today</button>
+      <div className="nav-group">
+        <button className="icon-btn" onClick={() => (view === 'month' ? gotoMonth(-1) : setViewDate(addDays(viewDate, -step)))}>‹</button>
+        <button className="icon-btn" onClick={() => (view === 'month' ? gotoMonth(1) : setViewDate(addDays(viewDate, step)))}>›</button>
+      </div>
+      <span className="today-date">{title}</span>
+      <div className="spacer" />
+      {view !== 'month' && (
+        <div className="density">
+          <span className="lbl">Density</span>
+          <button className="icon-btn" title="Compact" onClick={() => setZoom((z) => clamp(+(z - 0.3).toFixed(2), 0.7, 3))}>−</button>
+          <button className="icon-btn" title="Roomy" onClick={() => setZoom((z) => clamp(+(z + 0.3).toFixed(2), 0.7, 3))}>+</button>
+        </div>
+      )}
       <div className="seg">
-        <button className={'seg-btn' + (view === 'day' ? ' on' : '')} onClick={() => setView('day')}>Day</button>
-        <button className={'seg-btn' + (view === 'week' ? ' on' : '')} onClick={() => setView('week')}>Week</button>
+        {['day', 'week', 'month'].map((v) => (
+          <button key={v} className={'seg-btn' + (view === v ? ' on' : '')} onClick={() => setView(v)}>{v[0].toUpperCase() + v.slice(1)}</button>
+        ))}
       </div>
     </div>
   )
 }
 
-function Sidebar(props) {
-  const {
-    projects, onAddProject, onEditProject, onDeleteProject,
-    connected, groups, taskFilter, setTaskFilter, collapsed, setCollapsed,
-    connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar, showCalPicker, setShowCalPicker,
-    remState, onEnableReminders,
-  } = props
-  const [newName, setNewName] = useState('')
+/* ---- Day grid (full drag / resize / click-create) ---- */
+function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockName, onCommit, onEdit, onDelete, onCreateAt, onDropPayload }) {
+  const ref = useRef(null)
+  const drag = useRef(null)
+  const latest = useRef(blocks)
+  const [localBlocks, setLocalBlocks] = useState(blocks)
+  useEffect(() => { latest.current = blocks; setLocalBlocks(blocks) }, [blocks])
+  const buffers = useMemo(() => buffersFrom(meetings), [meetings])
+  const height = (DAY_END - DAY_START) * zoom
+  const hours = []; for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
+  const yToMin = (clientY) => clamp(snap(DAY_START + (clientY - ref.current.getBoundingClientRect().top) / zoom), DAY_START, DAY_END - SNAP_MIN)
 
-  function dragProject(e, id) { e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'project', projectId: id })) }
-  function dragTask(e, task, group, list) {
-    e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', task: { ...task, connId: group.id, listId: list.id } }))
+  function onPointerDown(e, block, mode) {
+    e.stopPropagation(); e.preventDefault()
+    drag.current = { id: block.id, mode, startY: e.clientY, orig: { ...block }, moved: false }
+    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp)
   }
-  function dragBatch(e, group, list) {
-    const tasks = list.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: group.id, listId: list.id }))
-    e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: list.title, tasks }))
+  function onMove(e) {
+    const dd = drag.current; if (!dd) return
+    if (Math.abs(e.clientY - dd.startY) > 4) dd.moved = true
+    const dMin = snap((e.clientY - dd.startY) / zoom)
+    const list = latest.current.map((b) => {
+      if (b.id !== dd.id) return b
+      if (dd.mode === 'move') { const len = dd.orig.end - dd.orig.start; const start = clamp(dd.orig.start + dMin, DAY_START, DAY_END - len); return { ...b, start, end: start + len } }
+      return { ...b, end: clamp(dd.orig.end + dMin, dd.orig.start + SNAP_MIN, DAY_END) }
+    })
+    latest.current = list; setLocalBlocks(list)
+  }
+  function onUp() {
+    const dd = drag.current; drag.current = null
+    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp)
+    if (dd && dd.moved) onCommit(latest.current)
+    else if (dd) { const b = blocks.find((x) => x.id === dd.id); if (b) onEdit(b) }
   }
 
   return (
-    <aside className="sidebar">
-      <div className="brand">Focus Planner</div>
+    <div className="cal-scroll">
+      <div className="grid" ref={ref} style={{ height }}
+        onClick={(e) => { if (e.target === ref.current) onCreateAt(yToMin(e.clientY)) }}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); try { onDropPayload(JSON.parse(e.dataTransfer.getData('application/json')), yToMin(e.clientY)) } catch {} }}>
+        {hours.map((h) => (
+          <React.Fragment key={h}>
+            <div className="hour-row" style={{ top: (h - DAY_START) * zoom }}><span className="hour-label">{labelShort(h)}</span></div>
+            {h < DAY_END && <div className="hour-row half" style={{ top: (h + 30 - DAY_START) * zoom }} />}
+          </React.Fragment>
+        ))}
+        {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 0, right: 0 }}>Prep · {b.forTitle}</div>)}
+        {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 0, right: 0 }}><div className="ev-title">{m.title}</div><div className="ev-time">{label(m.start)} – {label(m.end)}</div></div>)}
+        {localBlocks.map((b) => (
+          <div key={b.id} className="ev ev-block" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 0, right: 0, background: blockColor(b) }}
+            onPointerDown={(e) => onPointerDown(e, b, 'move')}>
+            <button className="ev-del" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete(b.id) }}>×</button>
+            <div className="ev-title">{blockName(b)}</div>
+            <div className="ev-time">{label(b.start)} – {label(b.end)}</div>
+            {Array.isArray(b.tasks) && b.tasks.length > 0 && (b.end - b.start) * zoom > 52 && (
+              <div className="ev-tasklist">{b.tasks.slice(0, 4).map((t) => <div key={t.id} className={'ev-task' + (t.status === 'completed' ? ' done' : '')}>• {t.title}</div>)}</div>
+            )}
+            <div className="ev-resize" onPointerDown={(e) => onPointerDown(e, b, 'resize')} />
+          </div>
+        ))}
+        {day === today && now >= DAY_START && now <= DAY_END && <div className="now-line" style={{ top: (now - DAY_START) * zoom }}><span className="now-dot" /></div>}
+      </div>
+    </div>
+  )
+}
 
-      <section>
-        <div className="sec-head">Projects</div>
-        <div className="project-list">
-          {projects.map((p) => (
-            <div key={p.id} className="project-row" draggable onDragStart={(e) => dragProject(e, p.id)}>
-              <span className="swatch" style={{ background: p.color }} />
-              <span className="project-name" onClick={() => onEditProject(p)}>{p.name}</span>
-              <button className="row-x" onClick={() => onDeleteProject(p.id)}>×</button>
-            </div>
-          ))}
+/* ---- Week grid ---- */
+function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsFor, blockColor, blockName, onOpenDay, onEdit, onCreateAt, onDropPayload }) {
+  const days = weekDays(viewDate)
+  const height = (DAY_END - DAY_START) * zoom
+  const hours = []; for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
+  const colRefs = useRef({})
+  const yToMin = (day, clientY) => clamp(snap(DAY_START + (clientY - colRefs.current[day].getBoundingClientRect().top) / zoom), DAY_START, DAY_END - SNAP_MIN)
+  return (
+    <div className="cal-scroll">
+      <div className="week-colhead">
+        <div />
+        {days.map((d) => { const dd = new Date(d + 'T12:00:00'); return (
+          <div key={d} className={'wch' + (d === today ? ' is-today' : '')} onClick={() => onOpenDay(d)} style={{ cursor: 'pointer' }}>
+            <div className="dow">{dd.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+            <div className="num">{dd.getDate()}</div>
+          </div>
+        ) })}
+      </div>
+      <div className="week-body" style={{ height }}>
+        <div className="week-axis">
+          {hours.map((h) => <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom, left: 0, right: 'auto', width: 52, borderTop: 'none' }}><span className="hour-label">{labelShort(h)}</span></div>)}
         </div>
-        <form className="add-row" onSubmit={(e) => { e.preventDefault(); if (newName.trim()) { onAddProject(newName.trim()); setNewName('') } }}>
-          <input className="underline-input sm" placeholder="＋ Add project" value={newName} onChange={(e) => setNewName(e.target.value)} />
-        </form>
-      </section>
+        <div className="week-cols">
+          {days.map((d) => {
+            const meetings = meetingsFor(d); const buffers = buffersFrom(meetings); const bl = blocksByDay[d] || []
+            return (
+              <div key={d} className={'week-col' + (d === today ? ' is-today' : '')} ref={(el) => (colRefs.current[d] = el)}
+                onClick={(e) => { if (e.currentTarget === e.target) onCreateAt(d, yToMin(d, e.clientY)) }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => { e.preventDefault(); try { onDropPayload(d, JSON.parse(e.dataTransfer.getData('application/json')), yToMin(d, e.clientY)) } catch {} }}>
+                {hours.map((h) => <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom, left: 0 }} />)}
+                {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 2, right: 2 }} />)}
+                {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 2, right: 2 }} title={m.title}><div className="ev-title">{m.title}</div></div>)}
+                {bl.map((b) => <div key={b.id} className="ev ev-block" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 2, right: 2, background: blockColor(b) }} onClick={(e) => { e.stopPropagation(); onEdit(b, d) }}><div className="ev-title">{blockName(b)}</div></div>)}
+                {d === today && now >= DAY_START && now <= DAY_END && <div className="now-line" style={{ top: (now - DAY_START) * zoom, left: 0 }}><span className="now-dot" /></div>}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
 
-      <section>
-        <div className="sec-head">
-          Tasks
-          <div className="seg sm">
+/* ---- Month grid ---- */
+function MonthGrid({ viewDate, today, blocksByDay, meetingsFor, blockColor, blockName, onOpenDay }) {
+  const cells = monthGridDays(viewDate); const cur = monthOf(viewDate)
+  const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  return (
+    <div className="month">
+      <div className="month-dowrow">{dows.map((d) => <div key={d} className="month-dow">{d}</div>)}</div>
+      <div className="month-grid">
+        {cells.map((d) => {
+          const bl = blocksByDay[d] || []; const meetings = meetingsFor(d)
+          const items = [...meetings.map((m) => ({ meeting: true, title: m.title, start: m.start })), ...bl.map((b) => ({ title: blockName(b), color: blockColor(b), start: b.start }))].sort((a, b) => a.start - b.start)
+          return (
+            <div key={d} className={'mcell' + (monthOf(d) !== cur ? ' out' : '') + (d === today ? ' is-today' : '')} onClick={() => onOpenDay(d)}>
+              <div className="mcell-num">{dayNum(d)}</div>
+              {items.slice(0, 3).map((it, i) => <div key={i} className={'mchip' + (it.meeting ? ' meeting' : '')} style={it.meeting ? undefined : { background: it.color }}>{it.title}</div>)}
+              {items.length > 3 && <div className="mmore">+{items.length - 3} more</div>}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ---- Sidebar ---- */
+function Sidebar(props) {
+  const {
+    projects, onAddProject, onEditProject, onDeleteProject, connected, hasZoho, groups,
+    taskFilter, setTaskFilter, taskSearch, setTaskSearch, collapsed, setCollapsed, sections, setSections,
+    connections, onOpenConnections, remState, onEnableReminders,
+  } = props
+  const [newName, setNewName] = useState('')
+  const dragProject = (e, id) => e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'project', projectId: id }))
+  const dragTask = (e, task, g, l) => e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'task', task: { ...task, connId: g.id, listId: l.id } }))
+  const dragBatch = (e, g, l) => e.dataTransfer.setData('application/json', JSON.stringify({ kind: 'batch', title: l.title, tasks: l.tasks.filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) }))
+  const toggleSec = (k) => setSections({ ...sections, [k]: !sections[k] })
+
+  return (
+    <aside className="sidebar">
+      <div className="brand"><span className="dot" /> Focus Planner</div>
+
+      <div className="sb-section">
+        <div className="sb-head clickable" onClick={() => toggleSec('projects')}>
+          <span>Projects</span><span className="caret">{sections.projects ? '▸' : '▾'}</span>
+        </div>
+        {!sections.projects && (
+          <>
+            <div className="proj-list">
+              {projects.map((p) => (
+                <div key={p.id} className="proj-row" draggable onDragStart={(e) => dragProject(e, p.id)}>
+                  <span className="grip">⋮⋮</span>
+                  <span className="swatch" style={{ background: p.color }} />
+                  <span className="proj-name" onClick={() => onEditProject(p)}>{p.name}</span>
+                  <button className="row-x" onClick={() => onDeleteProject(p.id)}>×</button>
+                </div>
+              ))}
+              {projects.length === 0 && <div className="muted" style={{ padding: '4px 8px' }}>Add a project, then drag it onto the grid to block time.</div>}
+            </div>
+            <form className="add-proj" onSubmit={(e) => { e.preventDefault(); if (newName.trim()) { onAddProject(newName.trim()); setNewName('') } }}>
+              <input className="field" placeholder="New project…" value={newName} onChange={(e) => setNewName(e.target.value)} />
+              <button className="btn primary sm" type="submit">Add</button>
+            </form>
+          </>
+        )}
+      </div>
+
+      <div className="sb-section">
+        <div className="sb-head"><span>Tasks</span>
+          <div className="seg">
             <button className={'seg-btn' + (taskFilter === 'all' ? ' on' : '')} onClick={() => setTaskFilter('all')}>All</button>
             <button className={'seg-btn' + (taskFilter === 'today' ? ' on' : '')} onClick={() => setTaskFilter('today')}>Today</button>
           </div>
         </div>
-        {!connected && <div className="demo-note">Demo tasks — connect Google below for your real tasks.</div>}
+        <div className="task-search"><input className="field" placeholder="Search tasks…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} /></div>
+        {!connected && !hasZoho && <div className="demo-note">Demo tasks — connect an account below for your real tasks.</div>}
         {groups.map((g) => (
-          <div key={g.id} className="task-group">
-            <div className="group-head">{g.account}</div>
-            {g.lists.map((list) => {
-              const key = g.id + '/' + list.id
-              const isCollapsed = collapsed[key]
+          <div key={g.id} className="tgroup">
+            <div className="tgroup-head">{g.account}</div>
+            {g.lists.map((l) => {
+              const key = g.id + '/' + l.id; const col = collapsed[key]
               return (
-                <div key={list.id} className="task-list">
-                  <div className="list-head" draggable onDragStart={(e) => dragBatch(e, g, list)}>
-                    <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !isCollapsed })}>{isCollapsed ? '▸' : '▾'}</button>
-                    <span className="list-title">{list.title}</span>
-                    <span className="list-count">{list.tasks.length}</span>
+                <div key={l.id}>
+                  <div className="tlist-head" draggable onDragStart={(e) => dragBatch(e, g, l)}>
+                    <button className="caret" onClick={() => setCollapsed({ ...collapsed, [key]: !col })}>{col ? '▸' : '▾'}</button>
+                    <span className="tlist-title">{l.title}</span><span className="tlist-count">{l.tasks.length}</span>
                   </div>
-                  {!isCollapsed && list.tasks.map((t) => (
-                    <div key={t.id} className="task-item" draggable onDragStart={(e) => dragTask(e, t, g, list)}>
-                      <span className="dot" /> {t.title}
+                  {!col && l.tasks.map((t) => (
+                    <div key={t.id} className="titem" draggable onDragStart={(e) => dragTask(e, t, g, l)}>
+                      <span className="tdot" /><span>{t.title}{t.sub ? <div className="tsub">{t.sub}</div> : null}</span>
                     </div>
                   ))}
                 </div>
@@ -570,87 +567,54 @@ function Sidebar(props) {
             })}
           </div>
         ))}
-      </section>
+      </div>
 
-      <section>
-        <div className="sec-head">Connections</div>
-        {connections.length === 0 && <div className="muted">No accounts connected.</div>}
-        {connections.map((c) => (
-          <div key={c.id} className="conn-row">
-            <span className="conn-name">
-              {c.account_label || c.provider}
-              {c.provider === 'google' && c.extra?.features && !c.extra.features.includes('calendar') ? ' · tasks' : ''}
-            </span>
-            <button className="row-x" title="Disconnect" onClick={() => onDisconnect(c.id)}>×</button>
-          </div>
-        ))}
-        {connected && calAccounts.length > 0 && (
-          <>
-            <button className="link-btn" onClick={() => setShowCalPicker((v) => !v)}>
-              {showCalPicker ? 'Hide calendars' : 'Choose calendars'}
-            </button>
-            {showCalPicker && calAccounts.map((a) => (
-              <div key={a.connId} className="cal-group">
-                <div className="muted">{a.email}</div>
-                {a.calendars.map((c) => {
-                  const key = `${a.connId}::${c.id}`
-                  return (
-                    <label key={c.id} className="cal-row">
-                      <input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} />
-                      <span className="swatch" style={{ background: c.color || '#888' }} />
-                      {c.summary}
-                    </label>
-                  )
-                })}
-              </div>
-            ))}
-          </>
-        )}
-        <a className="btn-connect" href="/api/google/start">+ Google (calendar + tasks)</a>
-        <a className="btn-connect" href="/api/google/start?mode=tasks">+ Google (tasks only)</a>
-        <a className="btn-connect" href="/api/zoho/start">+ Connect Zoho</a>
-      </section>
-
-      <section>
-        <div className="sec-head">Reminders</div>
-        {remState === 'granted' ? (
-          <div className="muted">On. Only fire while a tab is open (browser limit).</div>
-        ) : (
-          <>
-            <button className="btn-secondary" onClick={onEnableReminders} disabled={remState === 'unsupported'}>Enable reminders</button>
-            <div className="muted">Only fire while a tab is open (browser limit).</div>
-          </>
-        )}
-      </section>
-
+      <div className="sidebar-foot">
+        <button className="btn" style={{ width: '100%', justifyContent: 'center' }} onClick={onOpenConnections}>
+          Connections{connections.length ? ` · ${connections.length}` : ''}
+        </button>
+        <div style={{ marginTop: 10 }}>
+          {remState === 'granted'
+            ? <div className="muted">Reminders on — only while a tab is open.</div>
+            : <button className="link" onClick={onEnableReminders} disabled={remState === 'unsupported'}>Enable reminders</button>}
+        </div>
+      </div>
     </aside>
   )
 }
 
-function WeekView({ viewDate, blocks, projects, today, onPickDay }) {
-  const days = weekDays(viewDate)
+/* ---- Modals ---- */
+function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar, onClose }) {
   return (
-    <div className="week">
-      {days.map((d) => {
-        const list = [...(blocks[d] || [])].sort((a, b) => a.start - b.start)
-        const dd = new Date(d + 'T12:00:00')
-        return (
-          <div key={d} className={'week-col' + (d === today ? ' is-today' : '')} onClick={() => onPickDay(d)}>
-            <div className="week-head">
-              <div className="week-dow">{dd.toLocaleDateString('en-US', { weekday: 'short' })}</div>
-              <div className="week-num">{dd.getDate()}</div>
-            </div>
-            <div className="week-body">
-              {list.map((b) => {
-                const proj = projects.find((p) => p.id === b.projectId)
-                const color = b.color || proj?.color || '#0B8043'
-                const name = b.title || proj?.name || `${b.tasks?.length || 0} tasks`
-                return <div key={b.id} className="week-chip" style={{ background: color }}>{labelShort(b.start)} {name}</div>
-              })}
-            </div>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-title">Connections</div>
+        {connections.length === 0 && <div className="muted">No accounts connected yet.</div>}
+        {connections.map((c) => (
+          <div key={c.id} className="conn-row">
+            <span className="conn-name">{c.account_label || c.provider}</span>
+            {c.provider === 'google' && c.extra?.features && !c.extra.features.includes('calendar') && <span className="conn-badge">tasks</span>}
+            <button className="row-x" onClick={() => onDisconnect(c.id)}>×</button>
           </div>
-        )
-      })}
+        ))}
+        <a className="btn-connect" href="/api/google/start">＋ Google (calendar + tasks)</a>
+        <a className="btn-connect" href="/api/google/start?mode=tasks">＋ Google (tasks only)</a>
+        <a className="btn-connect" href="/api/zoho/start">＋ Connect Zoho</a>
+        {calAccounts.length > 0 && (
+          <div>
+            <div className="field-label" style={{ marginTop: 6 }}>Calendars shown</div>
+            {calAccounts.map((a) => (
+              <div key={a.connId} className="cal-group">
+                <div className="muted">{a.email}</div>
+                {a.calendars.map((c) => { const key = `${a.connId}::${c.id}`; return (
+                  <label key={c.id} className="cal-row"><input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} /><span className="swatch" style={{ background: c.color || '#888' }} />{c.summary}</label>
+                ) })}
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="modal-actions"><div className="spacer" /><button className="btn" onClick={onClose}>Done</button></div>
+      </div>
     </div>
   )
 }
@@ -661,19 +625,33 @@ function ProjectModal({ project, onSave, onClose, onDelete }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">Edit project</div>
-        <input className="underline-input" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} placeholder="Name" />
-        <input className="underline-input" value={p.note || ''} onChange={(e) => setP({ ...p, note: e.target.value })} placeholder="Note (shows on the focus card)" />
-        <div className="swatches">
-          {PALETTE.map((c) => (
-            <button key={c} className={'swatch-btn' + (p.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setP({ ...p, color: c })} />
-          ))}
+        <div><div className="field-label">Name</div><input className="field" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} /></div>
+        <div><div className="field-label">Note (shows on the focus card)</div><input className="field" value={p.note || ''} onChange={(e) => setP({ ...p, note: e.target.value })} /></div>
+        <div><div className="field-label">Color</div><div className="swatches">{PALETTE.map((c) => <button key={c} className={'swatch-btn' + (p.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setP({ ...p, color: c })} />)}</div></div>
+        <div className="modal-actions"><button className="link danger" onClick={() => { onDelete(p.id); onClose() }}>Delete</button><div className="spacer" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(p)}>Save</button></div>
+      </div>
+    </div>
+  )
+}
+
+function BlockModal({ entry, projects, onSave, onDelete, onClose }) {
+  const [b, setB] = useState({ ...entry.block })
+  const isProject = !!b.projectId
+  const proj = projects.find((p) => p.id === b.projectId)
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-title">Edit block</div>
+        {isProject
+          ? <div><div className="field-label">Project</div><div className="field" style={{ background: 'var(--panel-2)' }}>{proj?.name || 'Project'}</div></div>
+          : <div><div className="field-label">Title</div><input className="field" value={b.title || ''} onChange={(e) => setB({ ...b, title: e.target.value })} /></div>}
+        <div className="modal-row">
+          <div style={{ flex: 1 }}><div className="field-label">Start</div><input type="time" className="field" step="900" value={minToTime(b.start)} onChange={(e) => setB({ ...b, start: timeToMin(e.target.value) })} /></div>
+          <div style={{ flex: 1 }}><div className="field-label">End</div><input type="time" className="field" step="900" value={minToTime(b.end)} onChange={(e) => setB({ ...b, end: Math.max(timeToMin(e.target.value), b.start + SNAP_MIN) })} /></div>
         </div>
-        <div className="modal-actions">
-          <button className="link-btn danger" onClick={() => { onDelete(p.id); onClose() }}>Delete</button>
-          <div className="toolbar-spacer" />
-          <button className="link-btn" onClick={onClose}>Cancel</button>
-          <button className="btn-primary sm" onClick={() => onSave(p)} style={{ background: ACCENT }}>Save</button>
-        </div>
+        {!isProject && <div><div className="field-label">Color</div><div className="swatches">{PALETTE.map((c) => <button key={c} className={'swatch-btn' + (b.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setB({ ...b, color: c })} />)}</div></div>}
+        {Array.isArray(b.tasks) && b.tasks.length > 0 && <div className="muted">{b.tasks.length} task{b.tasks.length > 1 ? 's' : ''} in this block</div>}
+        <div className="modal-actions"><button className="link danger" onClick={onDelete}>Delete</button><div className="spacer" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(b)}>Save</button></div>
       </div>
     </div>
   )

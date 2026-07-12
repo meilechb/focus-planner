@@ -49,6 +49,23 @@ export function weekDays(iso) {
   return Array.from({ length: 7 }, (_, i) => addDays(start, i))
 }
 
+// 6x7 = 42 day grid (Sun-first) covering the month that contains `iso`.
+export function monthGridDays(iso) {
+  const d = parseISO(iso)
+  const firstOfMonth = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`
+  const firstDow = parseISO(firstOfMonth).getUTCDay() // 0 = Sun
+  const gridStart = addDays(firstOfMonth, -firstDow)
+  return Array.from({ length: 42 }, (_, i) => addDays(gridStart, i))
+}
+
+export function monthOf(iso) {
+  return iso.slice(0, 7) // "YYYY-MM"
+}
+
+export function dayNum(iso) {
+  return Number(iso.slice(8, 10))
+}
+
 // --- time formatting --------------------------------------------------------
 
 export function label(min) {

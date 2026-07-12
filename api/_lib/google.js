@@ -1,7 +1,7 @@
 // Google OAuth + Calendar + Tasks via plain fetch (no googleapis package, to
 // keep serverless cold starts fast). Access tokens are minted on demand from
 // the stored refresh token; only refresh tokens are persisted (encrypted).
-import { toLocalMinutes, zonedDayRange } from './time.js'
+import { toLocalMinutes, localDateISO, zonedDayRange } from './time.js'
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -120,6 +120,37 @@ export async function listEvents({ accessToken, calendarId, dateISO, tz }) {
     out.push({
       id: ev.id,
       title: ev.summary || '(no title)',
+      start: toLocalMinutes(ev.start.dateTime, tz),
+      end: toLocalMinutes(ev.end.dateTime, tz),
+    })
+  }
+  return out
+}
+
+// Timed events across [startISO, endISO] (inclusive, owner tz), each tagged
+// with its local date + minutes. Used by Week/Month views.
+export async function listEventsRange({ accessToken, calendarId, startISO, endISO, tz }) {
+  const timeMin = zonedDayRange(startISO, tz).timeMin
+  const timeMax = zonedDayRange(endISO, tz).timeMax
+  const p = new URLSearchParams({
+    singleEvents: 'true',
+    orderBy: 'startTime',
+    timeMin,
+    timeMax,
+    maxResults: '2500',
+  })
+  const data = await gfetch(
+    `${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events?${p.toString()}`,
+    accessToken,
+  )
+  const out = []
+  for (const ev of data.items || []) {
+    if (ev.status === 'cancelled') continue
+    if (!ev.start?.dateTime || !ev.end?.dateTime) continue // skip all-day
+    out.push({
+      id: ev.id,
+      title: ev.summary || '(no title)',
+      date: localDateISO(ev.start.dateTime, tz),
       start: toLocalMinutes(ev.start.dateTime, tz),
       end: toLocalMinutes(ev.end.dateTime, tz),
     })

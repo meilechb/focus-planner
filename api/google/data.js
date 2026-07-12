@@ -6,7 +6,7 @@
 //   "complete"  { connId, listId, taskId, completed } -> { ok }
 import { requireUser, listConnections, getConnection, getPublicState } from '../_lib/store.js'
 import {
-  refreshAccessToken, listCalendars, listEvents, listTaskLists, listTasks, setTaskCompleted,
+  refreshAccessToken, listCalendars, listEvents, listEventsRange, listTaskLists, listTasks, setTaskCompleted,
 } from '../_lib/google.js'
 
 const clientId = () => process.env.GOOGLE_CLIENT_ID
@@ -74,6 +74,29 @@ export default async function handler(req, res) {
         for (const calendarId of entry.calendarIds || []) {
           const evs = await listEvents({ accessToken, calendarId, dateISO, tz })
           for (const e of evs) events.push({ ...e, connId: entry.connId, calendarId })
+        }
+      }
+      return res.status(200).json({ events })
+    }
+
+    if (action === 'eventsRange') {
+      const { startISO, endISO, cals = [] } = body
+      const tz = (await getPublicState()).timezone || 'America/New_York'
+      const events = []
+      for (const entry of cals) {
+        let accessToken
+        try {
+          ;({ accessToken } = await tokenFor(entry.connId))
+        } catch {
+          continue
+        }
+        for (const calendarId of entry.calendarIds || []) {
+          try {
+            const evs = await listEventsRange({ accessToken, calendarId, startISO, endISO, tz })
+            for (const e of evs) events.push({ ...e, connId: entry.connId, calendarId })
+          } catch {
+            /* skip a calendar that errors */
+          }
         }
       }
       return res.status(200).json({ events })
