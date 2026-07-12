@@ -176,6 +176,17 @@ async function projGet(path, accessToken) {
   return data
 }
 
+// Zoho migrated Projects to the V3 API (/api/v3 replaces /restapi). Tasks now
+// live only on V3, so those calls go through here.
+async function projGetV3(path, accessToken) {
+  const res = await fetch(`${projectsBase()}/api/v3${path}`, {
+    headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(`zoho projects v3 ${path}: ${data.error?.message || data.message || JSON.stringify(data).slice(0, 140)}`)
+  return data
+}
+
 export async function listPortals(accessToken) {
   const d = await projGet('/portals/', accessToken)
   return (d.portals || []).map((p) => ({ id: String(p.id), name: p.name }))
@@ -187,15 +198,20 @@ export async function listProjects(portalId, accessToken) {
 }
 
 export async function listProjectTasks(portalId, projectId, accessToken) {
-  const d = await projGet(`/portal/${portalId}/projects/${projectId}/tasks/`, accessToken)
+  // V3 tasks endpoint (the old /restapi/.../tasks/ was removed by Zoho).
+  const d = await projGetV3(`/portal/${portalId}/projects/${projectId}/tasks?per_page=200`, accessToken)
+  const closedName = (t) => {
+    const s = t.status
+    return s?.name || s?.type || (typeof s === 'string' ? s : '') || t.status_name || ''
+  }
   return (d.tasks || [])
-    .filter((t) => !(t.status && /closed/i.test(t.status.type || t.status.name || '')))
+    .filter((t) => !/closed|completed/i.test(closedName(t)))
     .map((t) => {
-      // Owners can arrive under details.owners, owners, or owner (shape varies by API version).
-      const ownerList = t.details?.owners || t.owners || (t.owner ? [t.owner] : [])
-      const owners = (Array.isArray(ownerList) ? ownerList : []).map((o) => o?.name || o?.full_name || o?.zpuid || o).filter((x) => x && typeof x === 'string')
-      const status = t.status?.name || (typeof t.status === 'string' ? t.status : null) || t.status_name || null
-      const priority = t.priority || t.priority_name || (typeof t.priority === 'object' ? t.priority?.name : null) || null
+      // Owners/assignees vary by API version: details.owners, owners, owner, assignees, assignee.
+      const ownerList = t.details?.owners || t.owners || t.assignees || (t.owner ? [t.owner] : []) || (t.assignee ? [t.assignee] : [])
+      const owners = (Array.isArray(ownerList) ? ownerList : []).map((o) => o?.name || o?.full_name || o?.first_name || o?.zpuid || o).filter((x) => x && typeof x === 'string')
+      const status = closedName(t) || null
+      const priority = (typeof t.priority === 'object' ? t.priority?.name : t.priority) || t.priority_name || null
       const tasklist = t.tasklist?.name || t.tasklist_name || null
       const fields = {}
       if (status) fields.Status = status
@@ -222,9 +238,9 @@ export async function listProjectTasks(portalId, projectId, accessToken) {
 // Returns null if the endpoint can't be reached, so callers can fall back gracefully.
 export async function listMyTaskIds(portalId, accessToken) {
   try {
-    const d = await projGet(`/portal/${portalId}/mytasks/`, accessToken)
+    const d = await projGetV3(`/portal/${portalId}/mytasks?per_page=200`, accessToken)
     return new Set((d.tasks || []).map((t) => String(t.id)))
   } catch {
-    return null
+    return null // fall back to owner-name matching
   }
 }
