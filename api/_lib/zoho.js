@@ -187,14 +187,29 @@ async function projGetV3(path, accessToken) {
   return data
 }
 
+// V3 returns large ids as `id_string` to survive JSON number precision; prefer it.
+const zid = (o) => String(o.id_string || o.id)
+
 export async function listPortals(accessToken) {
+  // Use V3 so portal ids match the V3 tasks endpoint; fall back to classic.
+  try {
+    const d = await projGetV3('/portals', accessToken)
+    const arr = d.portals || d.data || []
+    if (arr.length) return arr.map((p) => ({ id: zid(p), name: p.name || p.portal_name || 'Portal' }))
+  } catch { /* fall through */ }
   const d = await projGet('/portals/', accessToken)
   return (d.portals || []).map((p) => ({ id: String(p.id), name: p.name }))
 }
 
 export async function listProjects(portalId, accessToken) {
-  const d = await projGet(`/portal/${portalId}/projects/`, accessToken)
-  return (d.projects || []).map((p) => ({ id: String(p.id), name: p.name }))
+  try {
+    const d = await projGetV3(`/portal/${portalId}/projects?per_page=200`, accessToken)
+    const arr = d.projects || d.data || []
+    return arr.map((p) => ({ id: zid(p), name: p.name || 'Project' }))
+  } catch {
+    const d = await projGet(`/portal/${portalId}/projects/`, accessToken)
+    return (d.projects || []).map((p) => ({ id: String(p.id), name: p.name }))
+  }
 }
 
 export async function listProjectTasks(portalId, projectId, accessToken) {
@@ -204,7 +219,7 @@ export async function listProjectTasks(portalId, projectId, accessToken) {
     const s = t.status
     return s?.name || s?.type || (typeof s === 'string' ? s : '') || t.status_name || ''
   }
-  return (d.tasks || [])
+  return (d.tasks || d.data || [])
     .filter((t) => !/closed|completed/i.test(closedName(t)))
     .map((t) => {
       // Owners/assignees vary by API version: details.owners, owners, owner, assignees, assignee.
@@ -230,7 +245,7 @@ export async function listProjectTasks(portalId, projectId, accessToken) {
       } else if (raw && typeof raw === 'object') {
         for (const [key, val] of Object.entries(raw)) if (val != null && val !== '') fields[key] = String(val)
       }
-      return { id: String(t.id), title: t.name, status: 'needsAction', owners, fields }
+      return { id: zid(t), title: t.name, status: 'needsAction', owners, fields }
     })
 }
 
@@ -239,7 +254,7 @@ export async function listProjectTasks(portalId, projectId, accessToken) {
 export async function listMyTaskIds(portalId, accessToken) {
   try {
     const d = await projGetV3(`/portal/${portalId}/mytasks?per_page=200`, accessToken)
-    return new Set((d.tasks || []).map((t) => String(t.id)))
+    return new Set((d.tasks || d.data || []).map((t) => zid(t)))
   } catch {
     return null // fall back to owner-name matching
   }
