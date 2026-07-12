@@ -5,6 +5,7 @@ import {
   PALETTE, DAY_START, DAY_END, SNAP_MIN, ACCENT,
   isoDate, addDays, startOfWeek, weekDays, monthGridDays, monthOf, dayNum,
   label, labelShort, snap, clamp, uuid, buffersFrom, computeFocus, nowMinutes, localDateISO,
+  fitDrop, clampMove, clampResizeBottom, clampResizeTop,
 } from '../lib/lib.js'
 import FocusCard from './FocusCard.jsx'
 
@@ -266,11 +267,11 @@ export default function Planner() {
     }
   }
 
-  // --- create a block from a drop payload ----------------------------------
-  function blockFromPayload(payload, start) {
-    if (payload.kind === 'project') return { id: uuid(), start, end: Math.min(start + 60, DAY_END), projectId: payload.projectId }
-    if (payload.kind === 'task') return { id: uuid(), start, end: Math.min(start + 30, DAY_END), tasks: [payload.task] }
-    if (payload.kind === 'batch') { const dur = clamp(payload.tasks.length * 30, 30, 240); return { id: uuid(), start, end: Math.min(start + dur, DAY_END), title: payload.title, color: '#2563eb', tasks: payload.tasks } }
+  // --- create a block from a drop payload (start/end already collision-fit) --
+  function blockFromPayload(payload, start, end) {
+    if (payload.kind === 'project') return { id: uuid(), start, end, projectId: payload.projectId }
+    if (payload.kind === 'task') return { id: uuid(), start, end, tasks: [payload.task] }
+    if (payload.kind === 'batch') return { id: uuid(), start, end, title: payload.title, color: '#2563eb', tasks: payload.tasks }
     return null
   }
 
@@ -314,8 +315,8 @@ export default function Planner() {
             onCommit={(list) => setDayBlocks(viewDate, list)}
             onEdit={(b) => setEditBlock({ block: b, day: viewDate })}
             onDelete={(id) => deleteBlock(viewDate, id)}
-            onCreateAt={(min) => { const b = { id: uuid(), start: min, end: Math.min(min + 30, DAY_END), title: 'Focus', color: ACCENT, tasks: [] }; addBlockTo(viewDate, b); setEditBlock({ block: b, day: viewDate }) }}
-            onDropPayload={(payload, min) => { const b = blockFromPayload(payload, min); if (b) addBlockTo(viewDate, b) }}
+            onCreateAt={(start, end) => { const b = { id: uuid(), start, end, title: 'Focus', color: ACCENT, tasks: [] }; addBlockTo(viewDate, b); setEditBlock({ block: b, day: viewDate }) }}
+            onDropPayload={(payload, start, end) => { const b = blockFromPayload(payload, start, end); if (b) addBlockTo(viewDate, b) }}
           />
         )}
         {view === 'week' && (
@@ -324,8 +325,8 @@ export default function Planner() {
             blocksByDay={blocks} meetingsFor={meetingsFor} blockColor={blockColor} blockName={blockName}
             onOpenDay={(d) => { setViewDate(d); setView('day') }}
             onEdit={(b, d) => setEditBlock({ block: b, day: d })}
-            onCreateAt={(d, min) => { const b = { id: uuid(), start: min, end: Math.min(min + 30, DAY_END), title: 'Focus', color: ACCENT, tasks: [] }; addBlockTo(d, b); setEditBlock({ block: b, day: d }) }}
-            onDropPayload={(d, payload, min) => { const b = blockFromPayload(payload, min); if (b) addBlockTo(d, b) }}
+            onCreateAt={(d, start, end) => { const b = { id: uuid(), start, end, title: 'Focus', color: ACCENT, tasks: [] }; addBlockTo(d, b); setEditBlock({ block: b, day: d }) }}
+            onDropPayload={(d, payload, start, end) => { const b = blockFromPayload(payload, start, end); if (b) addBlockTo(d, b) }}
           />
         )}
         {view === 'month' && (
@@ -408,6 +409,8 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
   const hours = []; for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
   const yToMin = (clientY) => clamp(snap(DAY_START + (clientY - ref.current.getBoundingClientRect().top) / zoom), DAY_START, DAY_END - SNAP_MIN)
 
+  const occFor = (excludeId) => [...meetings, ...buffers, ...latest.current.filter((b) => b.id !== excludeId)]
+
   function onPointerDown(e, block, mode) {
     e.stopPropagation(); e.preventDefault()
     drag.current = { id: block.id, mode, startY: e.clientY, orig: { ...block }, moved: false }
@@ -417,11 +420,16 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
     const dd = drag.current; if (!dd) return
     if (Math.abs(e.clientY - dd.startY) > 4) dd.moved = true
     const dMin = snap((e.clientY - dd.startY) / zoom)
+    const others = occFor(dd.id)
     const list = latest.current.map((b) => {
       if (b.id !== dd.id) return b
-      if (dd.mode === 'move') { const len = dd.orig.end - dd.orig.start; const start = clamp(dd.orig.start + dMin, DAY_START, DAY_END - len); return { ...b, start, end: start + len } }
-      if (dd.mode === 'resize-top') { const start = clamp(dd.orig.start + dMin, DAY_START, dd.orig.end - SNAP_MIN); return { ...b, start } }
-      return { ...b, end: clamp(dd.orig.end + dMin, dd.orig.start + SNAP_MIN, DAY_END) }
+      if (dd.mode === 'move') {
+        const len = dd.orig.end - dd.orig.start
+        const r = clampMove(others, clamp(dd.orig.start + dMin, DAY_START, DAY_END - len), len)
+        return r ? { ...b, start: r.start, end: r.end } : b
+      }
+      if (dd.mode === 'resize-top') return { ...b, start: clampResizeTop(others, dd.orig.end, dd.orig.start + dMin) }
+      return { ...b, end: clampResizeBottom(others, dd.orig.start, dd.orig.end + dMin) }
     })
     latest.current = list; setLocalBlocks(list)
   }
@@ -432,20 +440,22 @@ function DayGrid({ day, today, now, zoom, blocks, meetings, blockColor, blockNam
     else if (dd) { const b = blocks.find((x) => x.id === dd.id); if (b) onEdit(b) }
   }
 
+  const occAll = () => [...meetings, ...buffers, ...latest.current]
+
   return (
     <div className="cal-scroll">
       <div className="grid" ref={ref} style={{ height }}
-        onClick={(e) => { if (e.target === ref.current) onCreateAt(yToMin(e.clientY)) }}
-        onDragOver={(e) => { e.preventDefault(); setHint(yToMin(e.clientY)) }}
+        onClick={(e) => { if (e.target === ref.current) { const s = fitDrop(occAll(), yToMin(e.clientY), 60); if (s) onCreateAt(s.start, s.end) } }}
+        onDragOver={(e) => { e.preventDefault(); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(s || { start: yToMin(e.clientY), end: yToMin(e.clientY) + SNAP_MIN, none: true }) }}
         onDragLeave={(e) => { if (e.target === ref.current) setHint(null) }}
-        onDrop={(e) => { e.preventDefault(); setHint(null); try { onDropPayload(JSON.parse(e.dataTransfer.getData('application/json')), yToMin(e.clientY)) } catch {} }}>
+        onDrop={(e) => { e.preventDefault(); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(null); if (s) { try { onDropPayload(JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
         {hours.map((h) => (
           <React.Fragment key={h}>
             <div className="hour-row" style={{ top: (h - DAY_START) * zoom }}><span className="hour-label">{labelShort(h)}</span></div>
             {h < DAY_END && <div className="hour-row half" style={{ top: (h + 30 - DAY_START) * zoom }} />}
           </React.Fragment>
         ))}
-        {hint != null && <div className="drop-hint" style={{ top: (hint - DAY_START) * zoom, height: 30 * zoom }}>{label(hint)}</div>}
+        {hint && <div className={'drop-hint' + (hint.none ? ' invalid' : '')} style={{ top: (hint.start - DAY_START) * zoom, height: (hint.end - hint.start) * zoom }}>{hint.none ? 'No room' : `${label(hint.start)} – ${label(hint.end)}`}</div>}
         {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 0, right: 0 }}>Prep · {b.forTitle}</div>)}
         {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 0, right: 0 }}><div className="ev-title">{m.title}</div><div className="ev-time">{label(m.start)} – {label(m.end)}</div></div>)}
         {localBlocks.map((b) => (
@@ -494,9 +504,9 @@ function WeekGrid({ viewDate, today, now, zoom, projects, blocksByDay, meetingsF
             const meetings = meetingsFor(d); const buffers = buffersFrom(meetings); const bl = blocksByDay[d] || []
             return (
               <div key={d} className={'week-col' + (d === today ? ' is-today' : '')} ref={(el) => (colRefs.current[d] = el)}
-                onClick={(e) => { if (e.currentTarget === e.target) onCreateAt(d, yToMin(d, e.clientY)) }}
+                onClick={(e) => { if (e.currentTarget === e.target) { const s = fitDrop([...meetings, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) onCreateAt(d, s.start, s.end) } }}
                 onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => { e.preventDefault(); try { onDropPayload(d, JSON.parse(e.dataTransfer.getData('application/json')), yToMin(d, e.clientY)) } catch {} }}>
+                onDrop={(e) => { e.preventDefault(); const s = fitDrop([...meetings, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) { try { onDropPayload(d, JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
                 {hours.map((h) => <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom, left: 0 }} />)}
                 {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 2, right: 2 }} />)}
                 {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 2, right: 2 }} title={`${m.title} · ${label(m.start)}`}><div className="ev-title">{m.title}</div>{(m.end - m.start) * zoom > 28 && <div className="ev-time">{label(m.start)}</div>}</div>)}
@@ -621,16 +631,37 @@ function Sidebar(props) {
 }
 
 /* ---- Modals ---- */
-function ProviderGlyph({ provider }) {
-  if (provider === 'zoho') return <span className="pglyph zoho">Z</span>
-  return <span className="pglyph google">G</span>
+function GoogleIcon({ size = 26 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden>
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+    </svg>
+  )
 }
+function ZohoIcon({ size = 26 }) {
+  // Zoho brandmark: four color blocks + red "ZOHO" wordmark stacked into a square.
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden>
+      <rect width="48" height="48" rx="10" fill="#fff" stroke="#eceff3" />
+      <g transform="translate(9 15)">
+        <rect x="0" y="0" width="6" height="9" rx="1.5" fill="#226DB4" />
+        <rect x="8" y="0" width="6" height="9" rx="1.5" fill="#E42527" />
+        <rect x="16" y="0" width="6" height="9" rx="1.5" fill="#F9B21D" />
+        <rect x="24" y="0" width="6" height="9" rx="1.5" fill="#089949" />
+      </g>
+      <text x="24" y="34" textAnchor="middle" fontSize="8" fontWeight="800" fill="#3a4256" fontFamily="Inter, Arial">ZOHO</text>
+    </svg>
+  )
+}
+function ProviderIcon({ provider, size }) { return provider === 'zoho' ? <ZohoIcon size={size} /> : <GoogleIcon size={size} /> }
 
 function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar, onClose }) {
-  const [feats, setFeats] = useState({ calendar: true, tasks: true })
-  const [open, setOpen] = useState(null)
-  const googleHref = `/api/google/start?feats=${[feats.calendar && 'calendar', feats.tasks && 'tasks'].filter(Boolean).join(',') || 'tasks'}`
-  const calsFor = (connId) => calAccounts.find((a) => a.connId === connId)?.calendars || []
+  const [detail, setDetail] = useState(null)
+  const [addGoogle, setAddGoogle] = useState(false)
+  const featBadges = (c) => (c.provider === 'google' ? (c.extra?.features || ['calendar', 'tasks']) : ['deals', 'leads', 'projects'])
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -639,62 +670,87 @@ function ConnectionsModal({ connections, onDisconnect, calAccounts, selectedCale
           <div className="modal-title">Connections</div>
           <button className="icon-btn" onClick={onClose}>×</button>
         </div>
-
         <div className="conn-body">
-          {connections.length === 0 && <div className="muted" style={{ padding: '4px 2px 12px' }}>No accounts connected yet. Add one below.</div>}
-
-          {connections.map((c) => {
-            const cfeats = c.extra?.features || ['calendar', 'tasks']
-            const cals = c.provider === 'google' && cfeats.includes('calendar') ? calsFor(c.id) : []
-            const expandable = cals.length > 0
-            const isOpen = open === c.id
-            return (
-              <div key={c.id} className={'conn-card' + (isOpen ? ' open' : '')}>
-                <div className={'conn-card-head' + (expandable ? ' clickable' : '')} onClick={() => expandable && setOpen(isOpen ? null : c.id)}>
-                  <ProviderGlyph provider={c.provider} />
-                  <div className="conn-card-id">
-                    <div className="conn-card-email">{c.account_label || c.provider}</div>
-                    <div className="conn-card-badges">
-                      {c.provider === 'google'
-                        ? cfeats.map((f) => <span key={f} className="conn-badge">{f}</span>)
-                        : <span className="conn-badge">deals · leads · projects</span>}
-                      {expandable && <span className="conn-badge">{cals.length} calendars</span>}
-                    </div>
+          {connections.length > 0 && <>
+            <div className="conn-section-label">Your connections</div>
+            <div className="conn-grid">
+              {connections.map((c) => (
+                <button key={c.id} className="conn-card2" onClick={() => setDetail(c)}>
+                  <div className="conn-logo"><ProviderIcon provider={c.provider} /></div>
+                  <div className="conn-card2-body">
+                    <div className="conn-card2-title">{c.account_label || c.provider}</div>
+                    <div className="conn-card2-sub">{featBadges(c).join(' · ')}</div>
                   </div>
-                  {expandable && <span className="conn-chev">{isOpen ? '▴' : '▾'}</span>}
-                  <button className="link danger" onClick={(e) => { e.stopPropagation(); onDisconnect(c.id) }}>Disconnect</button>
-                </div>
-                {expandable && isOpen && (
-                  <div className="conn-cals">
-                    <div className="field-label">Calendars shown on the grid</div>
-                    {cals.map((cal) => { const key = `${c.id}::${cal.id}`; return (
-                      <label key={cal.id} className="cal-row">
-                        <input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} />
-                        <span className="swatch" style={{ background: cal.color || '#888' }} />{cal.summary}
-                      </label>
-                    ) })}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+                  <span className="conn-chev">›</span>
+                </button>
+              ))}
+            </div>
+          </>}
 
-          <div className="conn-add">
-            <div className="conn-card add">
-              <div className="conn-card-head"><ProviderGlyph provider="google" /><div className="conn-card-id"><div className="conn-card-email">Add a Google account</div><div className="muted" style={{ fontSize: 12 }}>Choose what to sync</div></div></div>
-              <div className="conn-featrow">
-                <label className="chk"><input type="checkbox" checked={feats.calendar} onChange={(e) => setFeats({ ...feats, calendar: e.target.checked })} /> Calendar</label>
-                <label className="chk"><input type="checkbox" checked={feats.tasks} onChange={(e) => setFeats({ ...feats, tasks: e.target.checked })} /> Tasks</label>
-              </div>
-              <a className={'btn primary' + (!feats.calendar && !feats.tasks ? ' disabled' : '')} href={googleHref}
-                onClick={(e) => { if (!feats.calendar && !feats.tasks) e.preventDefault() }}>Connect Google</a>
-            </div>
-            <div className="conn-card add">
-              <div className="conn-card-head"><ProviderGlyph provider="zoho" /><div className="conn-card-id"><div className="conn-card-email">Add Zoho</div><div className="muted" style={{ fontSize: 12 }}>Deals, leads & projects</div></div></div>
-              <a className="btn primary" href="/api/zoho/start">Connect Zoho</a>
-            </div>
+          <div className="conn-section-label">Add a connection</div>
+          <div className="conn-grid">
+            <button className="conn-card2" onClick={() => setAddGoogle(true)}>
+              <div className="conn-logo"><GoogleIcon /></div>
+              <div className="conn-card2-body"><div className="conn-card2-title">Google</div><div className="conn-card2-sub">Calendar & Tasks</div></div>
+              <span className="conn-chev">＋</span>
+            </button>
+            <a className="conn-card2" href="/api/zoho/start">
+              <div className="conn-logo"><ZohoIcon /></div>
+              <div className="conn-card2-body"><div className="conn-card2-title">Zoho</div><div className="conn-card2-sub">Deals, leads & projects</div></div>
+              <span className="conn-chev">＋</span>
+            </a>
           </div>
         </div>
+      </div>
+
+      {detail && (
+        <ConnectionDetailModal connection={detail}
+          calendars={detail.provider === 'google' && (detail.extra?.features || ['calendar']).includes('calendar') ? (calAccounts.find((a) => a.connId === detail.id)?.calendars || []) : []}
+          selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
+          onDisconnect={() => { onDisconnect(detail.id); setDetail(null) }} onClose={() => setDetail(null)} />
+      )}
+      {addGoogle && <AddGoogleModal onClose={() => setAddGoogle(false)} />}
+    </div>
+  )
+}
+
+function ConnectionDetailModal({ connection: c, calendars, selectedCalendars, toggleCalendar, onDisconnect, onClose }) {
+  const feats = c.provider === 'google' ? (c.extra?.features || ['calendar', 'tasks']) : ['deals', 'leads', 'projects']
+  return (
+    <div className="modal-backdrop nested" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="conn-detail-head">
+          <div className="conn-logo lg"><ProviderIcon provider={c.provider} size={32} /></div>
+          <div><div className="modal-title">{c.account_label || c.provider}</div><div className="muted" style={{ textTransform: 'capitalize' }}>{c.provider}</div></div>
+        </div>
+        <div><div className="field-label">Syncing</div><div className="conn-card-badges">{feats.map((f) => <span key={f} className="conn-badge">{f}</span>)}</div></div>
+        {calendars.length > 0 && (
+          <div><div className="field-label">Calendars shown on the grid</div>
+            {calendars.map((cal) => { const key = `${c.id}::${cal.id}`; return (
+              <label key={cal.id} className="cal-row"><input type="checkbox" checked={selectedCalendars.includes(key)} onChange={() => toggleCalendar(key)} /><span className="swatch" style={{ background: cal.color || '#888' }} />{cal.summary}</label>
+            ) })}
+          </div>
+        )}
+        <div className="modal-actions"><button className="link danger" onClick={onDisconnect}>Disconnect account</button><div className="spacer" /><button className="btn" onClick={onClose}>Done</button></div>
+      </div>
+    </div>
+  )
+}
+
+function AddGoogleModal({ onClose }) {
+  const [feats, setFeats] = useState({ calendar: true, tasks: true })
+  const href = `/api/google/start?feats=${[feats.calendar && 'calendar', feats.tasks && 'tasks'].filter(Boolean).join(',') || 'tasks'}`
+  const none = !feats.calendar && !feats.tasks
+  return (
+    <div className="modal-backdrop nested" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="conn-detail-head"><div className="conn-logo lg"><GoogleIcon size={32} /></div><div className="modal-title">Add a Google account</div></div>
+        <div className="muted">Choose what to sync from this account. You can add as many Google accounts as you like.</div>
+        <div className="conn-featrow">
+          <label className="chk"><input type="checkbox" checked={feats.calendar} onChange={(e) => setFeats({ ...feats, calendar: e.target.checked })} /> Calendar</label>
+          <label className="chk"><input type="checkbox" checked={feats.tasks} onChange={(e) => setFeats({ ...feats, tasks: e.target.checked })} /> Tasks</label>
+        </div>
+        <div className="modal-actions"><div className="spacer" /><button className="btn" onClick={onClose}>Cancel</button><a className={'btn primary' + (none ? ' disabled' : '')} href={href} onClick={(e) => none && e.preventDefault()}>Connect Google</a></div>
       </div>
     </div>
   )

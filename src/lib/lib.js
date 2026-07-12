@@ -132,6 +132,52 @@ export function buffersFrom(meetings) {
   return out
 }
 
+// --- collision-free placement ----------------------------------------------
+
+// Free gaps in [lo,hi] given occupied intervals.
+export function freeGaps(occupied, lo = DAY_START, hi = DAY_END) {
+  const s = [...occupied].sort((a, b) => a.start - b.start)
+  const gaps = []
+  let cur = lo
+  for (const o of s) { if (o.start > cur) gaps.push({ start: cur, end: o.start }); cur = Math.max(cur, o.end) }
+  if (cur < hi) gaps.push({ start: cur, end: hi })
+  return gaps
+}
+
+// Where a dropped block should land: snap start into free space, size to the
+// gap (default `preferred`, capped by available room, min one snap). null = no room.
+export function fitDrop(occupied, start, preferred = 60) {
+  const s = [...occupied].sort((a, b) => a.start - b.start)
+  let st = snap(start)
+  for (const o of s) if (st >= o.start && st < o.end) st = o.end // pushed out of an occupied slot
+  let next = DAY_END
+  for (const o of s) if (o.start >= st && o.start < next) next = o.start
+  const avail = next - st
+  if (avail < SNAP_MIN) return null
+  return { start: st, end: st + clamp(preferred, SNAP_MIN, avail) }
+}
+
+// Nearest non-overlapping placement for a moved block of length `len`.
+export function clampMove(occupied, start, len) {
+  const gaps = freeGaps(occupied).filter((g) => g.end - g.start >= len)
+  if (!gaps.length) return null
+  let best = null, bd = Infinity
+  for (const g of gaps) { const cs = clamp(start, g.start, g.end - len); const d = Math.abs(cs - start); if (d < bd) { bd = d; best = cs } }
+  return { start: best, end: best + len }
+}
+
+export function clampResizeBottom(occupied, start, desiredEnd) {
+  let next = DAY_END
+  for (const o of occupied) if (o.start >= start && o.start < next) next = o.start
+  return clamp(desiredEnd, start + SNAP_MIN, next)
+}
+
+export function clampResizeTop(occupied, end, desiredStart) {
+  let prev = DAY_START
+  for (const o of occupied) if (o.end <= end && o.end > prev) prev = o.end
+  return clamp(desiredStart, prev, end - SNAP_MIN)
+}
+
 // --- the focus brain --------------------------------------------------------
 
 function within(now, item) {

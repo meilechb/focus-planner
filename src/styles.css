@@ -75,9 +75,9 @@ input { font-family: inherit; }
 /* ============================================================
    App shell
    ============================================================ */
-.app { display: grid; grid-template-columns: 300px 1fr; height: 100%; background: var(--bg); }
+.app { display: grid; grid-template-columns: 300px 1fr; grid-template-rows: minmax(0, 1fr); height: 100vh; overflow: hidden; background: var(--bg); }
 .app.sidebar-collapsed { grid-template-columns: 0 1fr; }
-.main { display: flex; flex-direction: column; min-width: 0; }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 
 /* ---- sidebar ---- */
 .sidebar { background: var(--panel); border-right: 1px solid var(--line); overflow: hidden; display: flex; flex-direction: column; }
@@ -294,5 +294,26 @@ input { font-family: inherit; }
 
 /* connections card expand */
 .conn-card-head.clickable { cursor: pointer; }
-.conn-chev { color: var(--faint); font-size: 12px; }
+.conn-chev { color: var(--faint); font-size: 15px; }
 .conn-card.open { box-shadow: var(--shadow-sm); }
+.drop-hint.invalid { border-color: var(--danger); background: rgba(220,38,38,.08); color: var(--danger); }
+
+/* connections v2 */
+.conn-section-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin: 4px 2px 8px; }
+.conn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+.conn-card2 { display: flex; align-items: center; gap: 12px; text-align: left; text-decoration: none; border: 1px solid var(--line); background: var(--panel); border-radius: var(--r); padding: 14px; min-height: 70px; transition: border-color .12s, box-shadow .12s, background .12s; color: var(--ink); }
+.conn-card2:hover { border-color: #cfd4dc; box-shadow: var(--shadow-sm); background: var(--panel-2); }
+.conn-logo { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: #fff; border: 1px solid var(--line-2); flex: none; }
+.conn-logo.lg { width: 48px; height: 48px; }
+.conn-card2-body { flex: 1; min-width: 0; }
+.conn-card2-title { font-weight: 650; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conn-card2-sub { font-size: 12px; color: var(--muted); text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conn-detail-head { display: flex; align-items: center; gap: 14px; }
+.modal-backdrop.nested { z-index: 1200; background: rgba(17,24,39,.5); }
+
+/* focus card single-task complete button */
+.focus-complete { display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; background: rgba(255,255,255,.16); border: none; color: #fff; border-radius: 10px; padding: 13px; font-size: 14px; font-weight: 600; transition: background .12s; }
+.focus-complete:hover { background: rgba(255,255,255,.26); }
+.focus-complete .check { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,.9); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+.focus-complete.done .check { background: #fff; color: var(--ink); }
+.focus-complete.done { opacity: .85; }

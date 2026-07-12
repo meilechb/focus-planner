@@ -87,19 +87,25 @@ export default function FocusCard({ focus, now, onToggleTask, onNext, onHide }) 
       {focus.note ? <div className="focus-note">{focus.note}</div> : null}
 
       <div className="focus-tasks">
-        {focus.tasks?.length ? (
+        {!focus.tasks?.length ? (
+          <div className="focus-empty">Nothing to check off right now</div>
+        ) : focus.tasks.length === 1 ? (
+          (() => {
+            const t = focus.tasks[0]
+            const done = t.status === 'completed'
+            return (
+              <button className={'focus-complete' + (done ? ' done' : '')} onClick={() => onToggleTask(t)}>
+                <span className="check">{done ? '✓' : ''}</span>{done ? 'Completed' : 'Mark complete'}
+              </button>
+            )
+          })()
+        ) : (
           focus.tasks.map((t) => (
-            <button
-              key={t.id}
-              className={'focus-task' + (t.status === 'completed' ? ' done' : '')}
-              onClick={() => onToggleTask(t)}
-            >
+            <button key={t.id} className={'focus-task' + (t.status === 'completed' ? ' done' : '')} onClick={() => onToggleTask(t)}>
               <span className="check">{t.status === 'completed' ? '✓' : ''}</span>
               <span className="ttl">{t.title}</span>
             </button>
           ))
-        ) : (
-          <div className="focus-empty">Nothing to check off right now</div>
         )}
       </div>
 
