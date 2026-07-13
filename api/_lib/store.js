@@ -194,6 +194,23 @@ function summarizeDoc(doc) {
   }
 }
 
+// Force-copy the legacy Blob document into Redis (recovery tool). Overwrites
+// Redis only when Blob is readable and actually holds data, so it's safe to
+// trigger deliberately after the Blob store has been made readable again.
+export async function restoreFromBlob() {
+  if (!redisConfigured()) return { ok: false, reason: 'Redis is not configured' }
+  let legacy
+  try {
+    legacy = await blobReadNewest()
+  } catch (e) {
+    return { ok: false, reason: 'Blob is not readable yet: ' + String(e.message || e) }
+  }
+  if (!legacy) return { ok: false, reason: 'No data found in the Blob store' }
+  if (isBlankDoc(legacy)) return { ok: false, reason: 'The Blob store has no real data to restore' }
+  await redis().set(DOC_KEY, legacy)
+  return { ok: true, restored: summarizeDoc(legacy) }
+}
+
 export async function diagnostics() {
   const out = {
     redisConfigured: redisConfigured(),
