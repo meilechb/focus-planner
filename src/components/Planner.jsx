@@ -124,20 +124,36 @@ export default function Planner() {
         const r = await dataP
         state = r.state
         if (state.timezone) setTz(state.timezone)
-        setProjects(state.projects || [])
-        setBlocks(state.blocks || {})
-        setFavorites(state.favorites || [])
         setSelectedCalendars(state.selectedCalendars || [])
         setSelectedTaskLists(state.selectedTaskLists || [])
         setStorageOk(true)
-        // Heal: if the server doc is empty but we have cached local data (e.g. a
-        // prior save failed), restore it and push it back up.
+        // Restore-from-backup: this browser keeps a local copy of everything.
+        // If it holds blocks/projects/favorites the server is missing (e.g. a
+        // failed save, or a storage migration that lost data), merge them in
+        // and push them back up so nothing is lost. The server wins on
+        // conflicts; the local backup only fills gaps.
         const cache = readCache()
-        const serverEmpty = !(state.projects || []).length && !Object.keys(state.blocks || {}).length
-        if (serverEmpty && ((cache.projects || []).length || Object.keys(cache.blocks || {}).length)) {
-          if ((cache.projects || []).length) { setProjects(cache.projects); saveKey('projects', cache.projects) }
-          if (Object.keys(cache.blocks || {}).length) { setBlocks(cache.blocks); saveKey('blocks', cache.blocks) }
+        const serverBlocks = state.blocks || {}
+        const mergedBlocks = { ...(cache.blocks || {}) }
+        for (const [day, arr] of Object.entries(serverBlocks)) {
+          if (Array.isArray(arr) && arr.length) mergedBlocks[day] = arr // server wins when it has blocks that day
+          else if (!(day in mergedBlocks)) mergedBlocks[day] = arr
         }
+        const mergeById = (server, cached) => {
+          const m = new Map()
+          for (const x of cached || []) if (x && x.id) m.set(x.id, x)
+          for (const x of server || []) if (x && x.id) m.set(x.id, x) // server overrides on same id
+          return [...m.values()]
+        }
+        const mergedProjects = mergeById(state.projects, cache.projects)
+        const mergedFavorites = mergeById(state.favorites, cache.favorites)
+        setBlocks(mergedBlocks)
+        setProjects(mergedProjects)
+        setFavorites(mergedFavorites)
+        // Push up only what the local backup added beyond the server.
+        if (JSON.stringify(mergedBlocks) !== JSON.stringify(serverBlocks)) saveKey('blocks', mergedBlocks)
+        if (mergedProjects.length !== (state.projects || []).length) saveKey('projects', mergedProjects)
+        if (mergedFavorites.length !== (state.favorites || []).length) saveKey('favorites', mergedFavorites)
       } catch { setStorageOk(false) }
       // On a failed connections fetch, keep whatever we cached instead of wiping
       // the user's connected accounts to zero.
