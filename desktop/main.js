@@ -251,11 +251,14 @@ if (!gotLock) {
   app.whenReady().then(() => {
     buildMenu()
     createMainWindow()
-    createFocusWindow()
+    // The floating focus card is a transparent, always-on-top window — the most
+    // fragile combo across GPUs/OSes. Isolate it so a failure there can never
+    // stop the main planner window from opening.
+    try { createFocusWindow() } catch (e) { console.error('focus window failed:', e) }
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createMainWindow()
-        createFocusWindow()
+        try { createFocusWindow() } catch (e) { console.error('focus window failed:', e) }
       }
     })
   })

@@ -25,6 +25,12 @@ function fitZoomFor(availPx) {
 function defaultZoom() { return fitZoomFor() }
 const CACHE_KEY = 'focus_cache'
 function readCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}') } catch { return {} } }
+// Persisted "how I'm viewing the page" state (survives refresh): the day I'm
+// looking at, which sidebar sections are collapsed, which task lists are
+// collapsed, etc. Kept separate from the data cache.
+const VIEW_KEY = 'focus_view'
+function readView() { try { return JSON.parse(localStorage.getItem(VIEW_KEY) || '{}') } catch { return {} } }
+function writeView(patch) { try { localStorage.setItem(VIEW_KEY, JSON.stringify({ ...readView(), ...patch })) } catch {} }
 const SEEN_KEY = 'focus_seen_accounts'
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
 function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
@@ -91,7 +97,8 @@ export default function Planner() {
   const [gtasks, setGtasks] = useState(() => readCache().gtasks || [])
   const [zoho, setZoho] = useState(() => readCache().zoho || { crm: { deals: [], leads: [] }, projects: [], errors: [] })
 
-  const [viewDate, setViewDate] = useState(() => isoDate(new Date(), readCache().tz || DEFAULT_TZ))
+  const [viewDate, setViewDate] = useState(() => readView().viewDate || isoDate(new Date(), readCache().tz || DEFAULT_TZ))
+  useEffect(() => { writeView({ viewDate }) }, [viewDate])
   const [view, setView] = useState(() => readCache().view || 'day') // day | week | month
   // Density (px per minute). Auto-fits 8 AM–6 PM to the screen unless the user
   // has manually set the slider; re-fits on window resize.
@@ -121,9 +128,11 @@ export default function Planner() {
     try { localStorage.setItem('focus_theme', theme) } catch {}
   }, [theme])
 
-  const [taskFilter, setTaskFilter] = useState('all')
+  const [taskFilter, setTaskFilter] = useState(() => readView().taskFilter || 'all')
+  useEffect(() => { writeView({ taskFilter }) }, [taskFilter])
   const [taskSearch, setTaskSearch] = useState('')
-  const [collapsed, setCollapsed] = useState({})
+  const [collapsed, setCollapsed] = useState(() => readView().collapsed || {})
+  useEffect(() => { writeView({ collapsed }) }, [collapsed])
   const [sections, setSections] = useState(() => readCache().sections || { projects: false, tasks: false })
   const [sidebarOpen, setSidebarOpen] = useState(() => readCache().sidebarOpen !== false)
   const [focusHidden, setFocusHidden] = useState(() => { const c = readCache(); return c.focusHidden === undefined ? true : !!c.focusHidden })
@@ -942,7 +951,8 @@ function Sidebar(props) {
     connections, onOpenSettings, remState, onEnableReminders, tz, today, navCfg, onNavChange,
     calAccounts, selectedCalendars, toggleCalendar,
   } = props
-  const [secOpen, setSecOpen] = useState({})
+  const [secOpen, setSecOpen] = useState(() => readView().secOpen || {})
+  useEffect(() => { writeView({ secOpen }) }, [secOpen])
   const isOpen = (id, def = true) => (secOpen[id] === undefined ? def : secOpen[id])
   const tog = (id, def = true) => setSecOpen((o) => ({ ...o, [id]: !isOpen(id, def) }))
   function dueBadge(due) {

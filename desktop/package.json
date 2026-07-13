@@ -1,7 +1,7 @@
 {
   "name": "focus-planner-desktop",
   "productName": "Focus Planner",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Focus Planner — a native desktop window for your daily time-blocking planner.",
   "author": "Focus Planner",
   "license": "MIT",
@@ -24,6 +24,7 @@
     "productName": "Focus Planner",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "publish": null,
+    "afterPack": "afterPack.cjs",
     "directories": {
       "output": "dist",
       "buildResources": "build"
