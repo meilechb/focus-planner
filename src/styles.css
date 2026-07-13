@@ -759,6 +759,14 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 /* Event blocks: a touch more rounding for a friendlier feel. */
 .ev-block, .ev-meeting { border-radius: 9px; }
 
+/* Clickable section icon + icon picker popover. */
+.sbx-ic-btn { position: relative; cursor: pointer; }
+.sbx-ic-btn:hover { filter: brightness(1.06); box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 35%, transparent); }
+.icon-pop { position: absolute; top: 32px; left: 0; z-index: 40; display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; padding: 7px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-lg); width: 188px; }
+.icon-pop-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border: 1px solid transparent; background: var(--line-2); color: var(--ink-2); border-radius: 8px; transition: background var(--t), color var(--t); }
+.icon-pop-btn:hover { background: var(--accent-weak); color: var(--accent); }
+.icon-pop-btn.on { background: var(--accent); color: #fff; }
+
 /* Inline section rename. */
 .sbx-rename { flex: 1; min-width: 0; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--ink); background: var(--input-bg); border: 1px solid var(--accent); border-radius: 7px; padding: 3px 7px; outline: none; box-shadow: 0 0 0 3px var(--accent-weak); }
 .sbx-rename-btn { opacity: 0; }

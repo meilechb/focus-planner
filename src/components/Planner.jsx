@@ -29,7 +29,8 @@ const SEEN_KEY = 'focus_seen_accounts'
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
 function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
 const NAVCFG_KEY = 'focus_navcfg'
-const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, zohoAssignee: 'mine', filters: { deals: [], leads: [], projects: [] }, colors: {}, names: {}, buffers: { before: 15, after: 0 } }
+const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, zohoAssignee: 'mine', filters: { deals: [], leads: [], projects: [] }, colors: {}, names: {}, icons: {}, buffers: { before: 15, after: 0 } }
+const ICON_CHOICES = ['folder', 'check', 'list', 'calendar', 'bell', 'focus', 'star', 'users', 'clock', 'video', 'mapPin', 'link', 'align', 'sliders']
 // One source of truth for connector colors. A block dropped from a source, the
 // sidebar section, and the focus card ALL use this — so a Google task is the
 // same color everywhere. Users can override per source in Settings.
@@ -53,6 +54,7 @@ function readNavCfg() {
       filters: { ...DEFAULT_NAVCFG.filters, ...(p.filters || {}) },
       colors: { ...DEFAULT_NAVCFG.colors, ...(p.colors || {}) },
       names: { ...DEFAULT_NAVCFG.names, ...(p.names || {}) },
+      icons: { ...DEFAULT_NAVCFG.icons, ...(p.icons || {}) },
       buffers: { ...DEFAULT_NAVCFG.buffers, ...(p.buffers || {}) },
     }
   } catch { return { ...DEFAULT_NAVCFG } }
@@ -131,7 +133,8 @@ export default function Planner() {
   const [editBlock, setEditBlock] = useState(null) // { block, day }
   const [showConn, setShowConn] = useState(false)
   const [settingsTab, setSettingsTab] = useState('connections')
-  const openSettings = (tab) => { setSettingsTab(typeof tab === 'string' ? tab : 'connections'); setShowConn(true) }
+  const [settingsConnId, setSettingsConnId] = useState(null) // which connection to expand
+  const openSettings = (tab, connId = null) => { setSettingsTab(typeof tab === 'string' ? tab : 'connections'); setSettingsConnId(connId); setShowConn(true) }
   const [showHelp, setShowHelp] = useState(false)
   const [showCmd, setShowCmd] = useState(false)
   const [navCfg, setNavCfg] = useState(readNavCfg)
@@ -496,13 +499,15 @@ export default function Planner() {
       if (leads.length) crmLists.push({ id: 'leads', title: 'Leads', tasks: leads.map((d) => ({ id: d.id, title: d.title, sub: d.sub, status: 'needsAction', fields: d.fields || {}, open: d.open !== false, url: d.url, source: 'zoho' })).filter(searchOk) })
       if (crmLists.length) groups.push({ id: 'zoho-crm', account: 'Zoho CRM', lists: crmLists, dealFields: zoho.crm?.dealFields || [], leadFields: zoho.crm?.leadFields || [] })
       if (zprojects.length) {
-        // Derive filterable project fields (Status, Priority, Owner, Task List)
-        // from the values actually present across all project tasks.
+        // Derive filterable project fields from the values present across all
+        // project tasks, merged with any extra option lists the backend
+        // gathered (e.g. every Status value, including closed ones).
         const allTasks = zprojects.flatMap((p) => p.tasks || [])
-        const projFieldKeys = [...new Set(allTasks.flatMap((t) => Object.keys(t.fields || {})))]
+        const extraOpts = zoho.projectFieldOptions || {}
+        const projFieldKeys = [...new Set([...allTasks.flatMap((t) => Object.keys(t.fields || {})), ...Object.keys(extraOpts)])]
         const projectFields = projFieldKeys.map((k) => ({
           api_name: k, label: k,
-          values: [...new Set(allTasks.map((t) => t.fields?.[k]).filter(Boolean))].sort(),
+          values: [...new Set([...allTasks.map((t) => t.fields?.[k]).filter(Boolean), ...(extraOpts[k] || [])])].sort(),
         })).filter((f) => f.values.length)
         groups.push({ id: 'zoho-projects', account: 'Zoho Projects', projectFields, lists: zprojects.map((p) => ({ id: p.id, title: p.name, tasks: (p.tasks || []).map((t) => ({ ...t, source: 'zoho' })).filter(searchOk) })) })
       }
@@ -682,7 +687,7 @@ export default function Planner() {
           navCfg={navCfg} onNavChange={updateNavCfg} groups={displayGroups} connected={connected} hasZoho={hasZoho}
           zoom={zoom} setZoom={setZoom} tz={tz} onChangeTz={(v) => { setTz(v); saveKey('timezone', v) }}
           focusHidden={focusHidden} setFocusHidden={setFocusHidden} remState={remState} onEnableReminders={enableReminders}
-          theme={theme} setTheme={setTheme} initialTab={settingsTab}
+          theme={theme} setTheme={setTheme} initialTab={settingsTab} initialConnId={settingsConnId}
           zohoErrors={zoho?.errors} onClose={() => setShowConn(false)} />
       )}
       {showHelp && <ShortcutsModal onClose={() => setShowHelp(false)} />}
@@ -1014,11 +1019,12 @@ function Sidebar(props) {
   const groupMeta = (g) => {
     const color = srcColor(navCfg, g.id)
     const custom = navCfg.names?.[g.id]
-    if (g.id === 'zoho-crm') return { color, icon: 'list', title: custom || 'Zoho CRM', tab: 'crm' }
-    if (g.id === 'zoho-projects') return { color, icon: 'folder', title: custom || 'Zoho Projects', tab: 'projects' }
+    const ic = (def) => navCfg.icons?.[g.id] || def
+    if (g.id === 'zoho-crm') return { color, icon: ic('list'), title: custom || 'Zoho CRM', tab: 'crm' }
+    if (g.id === 'zoho-projects') return { color, icon: ic('folder'), title: custom || 'Zoho Projects', tab: 'projects' }
     // Two Google accounts would otherwise both read "Google Tasks" — fall back
     // to the account email to disambiguate, and let the user rename either.
-    return { color, icon: 'check', title: custom || (g.account && g.account !== 'Google' ? g.account : 'Google Tasks'), tab: 'gtasks' }
+    return { color, icon: ic('check'), title: custom || (g.account && g.account !== 'Google' ? g.account : 'Google Tasks'), tab: 'gtasks' }
   }
   // Rename any sidebar section (stored per section id in navCfg.names).
   function renameSection(gid, name) {
@@ -1027,6 +1033,10 @@ function Sidebar(props) {
     if (t) names[gid] = t
     else delete names[gid]
     onNavChange({ ...navCfg, names })
+  }
+  // Change a section's icon (stored per section id in navCfg.icons).
+  function setSectionIcon(gid, icon) {
+    onNavChange({ ...navCfg, icons: { ...(navCfg.icons || {}), [gid]: icon } })
   }
   // Drag an ENTIRE connector (e.g. all of Zoho CRM) onto the grid as one block.
   const dragBatchAll = (e, g) => {
@@ -1097,8 +1107,8 @@ function Sidebar(props) {
           <button className="sbx-label-add" title="Add a connector" onClick={() => onOpenSettings('connections')}><Icon name="plus" size={14} /></button>
         </div>
 
-        <SbSection color={navCfg.colors?.custom || '#7c3aed'} icon="folder" title={navCfg.names?.custom || 'Custom'} count={projects.length || null}
-          open={isOpen('custom')} onToggle={() => tog('custom')} onRename={(n) => renameSection('custom', n)}>
+        <SbSection color={navCfg.colors?.custom || '#7c3aed'} icon={navCfg.icons?.custom || 'folder'} title={navCfg.names?.custom || 'Custom'} count={projects.length || null}
+          open={isOpen('custom')} onToggle={() => tog('custom')} onRename={(n) => renameSection('custom', n)} onPickIcon={(ic) => setSectionIcon('custom', ic)}>
           <div className="proj-list">
             {projects.map((p) => (
               <div key={p.id} className="proj-row" draggable onDragStart={(e) => dragProject(e, p)}>
@@ -1118,7 +1128,7 @@ function Sidebar(props) {
           const cnt = g.lists.reduce((n, l) => n + listTasks(g, l).length, 0)
           return (
             <SbSection key={g.id} color={m.color} icon={m.icon} title={m.title} count={cnt}
-              open={isOpen(g.id)} onToggle={() => tog(g.id)} onSettings={() => onOpenSettings(m.tab)} onRename={(n) => renameSection(g.id, n)} onDragStart={(e) => dragBatchAll(e, g)}>
+              open={isOpen(g.id)} onToggle={() => tog(g.id)} onSettings={() => onOpenSettings(m.tab, m.tab === 'gtasks' ? g.id : null)} onRename={(n) => renameSection(g.id, n)} onPickIcon={(ic) => setSectionIcon(g.id, ic)} onDragStart={(e) => dragBatchAll(e, g)}>
               {renderGroup(g)}
             </SbSection>
           )
@@ -1141,15 +1151,35 @@ function Sidebar(props) {
 // A collapsible sidebar section: colored icon chip, title, count, hover gear.
 // Source sections are draggable (onDragStart) so the whole connector drops as one block.
 // Double-click the title (or the rename button) to rename it via onRename.
-function SbSection({ color, icon, title, count, open, onToggle, onSettings, onRename, onDragStart, children }) {
+function SbSection({ color, icon, title, count, open, onToggle, onSettings, onRename, onPickIcon, onDragStart, children }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(title)
+  const [iconOpen, setIconOpen] = useState(false)
+  useEffect(() => {
+    if (!iconOpen) return
+    const close = () => setIconOpen(false)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [iconOpen])
   const startEdit = (e) => { if (!onRename) return; e.stopPropagation(); setDraft(title); setEditing(true) }
   const commit = () => { setEditing(false); if (draft.trim() && draft.trim() !== title) onRename(draft.trim()) }
   return (
     <div className={'sbx' + (open ? ' open' : '')}>
       <div className="sbx-head" onClick={editing ? undefined : onToggle} draggable={!!onDragStart && !editing} onDragStart={onDragStart} title={onDragStart ? 'Drag onto the calendar to block this whole source' : undefined}>
-        <span className="sbx-ic" style={{ '--c': color }}><Icon name={icon} size={14} /></span>
+        {onPickIcon ? (
+          <span className="sbx-ic sbx-ic-btn" style={{ '--c': color }} title="Change icon" onClick={(e) => { e.stopPropagation(); setIconOpen((v) => !v) }}>
+            <Icon name={icon} size={14} />
+            {iconOpen && (
+              <div className="icon-pop" onClick={(e) => e.stopPropagation()}>
+                {ICON_CHOICES.map((ic) => (
+                  <button key={ic} className={'icon-pop-btn' + (ic === icon ? ' on' : '')} onClick={() => { onPickIcon(ic); setIconOpen(false) }}><Icon name={ic} size={15} /></button>
+                ))}
+              </div>
+            )}
+          </span>
+        ) : (
+          <span className="sbx-ic" style={{ '--c': color }}><Icon name={icon} size={14} /></span>
+        )}
         {editing ? (
           <input className="sbx-rename" autoFocus value={draft} onClick={(e) => e.stopPropagation()}
             onChange={(e) => setDraft(e.target.value)} onBlur={commit}
@@ -1239,7 +1269,7 @@ function SettingsModal(props) {
   const {
     connections, onDisconnect, calAccounts, selectedCalendars, toggleCalendar,
     taskAccounts, selectedTaskLists, toggleTaskList, navCfg, onNavChange, groups, connected, hasZoho,
-    zoom, setZoom, tz, onChangeTz, focusHidden, setFocusHidden, remState, onEnableReminders, theme, setTheme, initialTab, zohoErrors, onClose,
+    zoom, setZoom, tz, onChangeTz, focusHidden, setFocusHidden, remState, onEnableReminders, theme, setTheme, initialTab, initialConnId, zohoErrors, onClose,
   } = props
   const googleHasTasks = connections.some((c) => c.provider === 'google' && (c.extra?.features || ['calendar', 'tasks']).includes('tasks'))
   const cats = [
@@ -1254,6 +1284,9 @@ function SettingsModal(props) {
   const tabFor = (t) => (cats.some((c) => c.id === t) ? t : (['gtasks', 'crm', 'projects'].includes(t) ? 'connections' : 'connections'))
   const [tab, setTab] = useState(tabFor(initialTab))
   const [expanded, setExpanded] = useState(() => {
+    // Expand the exact connection that was clicked, when known (e.g. the right
+    // Google account of several). Fall back to the first of that provider.
+    if (initialConnId && connections.some((c) => c.id === initialConnId)) return initialConnId
     if (initialTab === 'gtasks') return googleConn?.id
     if (initialTab === 'crm' || initialTab === 'projects') return zohoConn?.id
     return null

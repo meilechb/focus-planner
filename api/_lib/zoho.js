@@ -243,21 +243,33 @@ function mapProjectTask(t) {
   const status = closedName(t) || null
   const priority = (typeof t.priority === 'object' ? t.priority?.name : t.priority) || t.priority_name || null
   const tasklist = t.tasklist?.name || t.tasklist_name || null
+  const nameOf = (v) => (v && typeof v === 'object' ? v.name || v.full_name || v.value : v)
+  const dueDate = t.end_date || t.due_date || t.enddate || null
+  const startDate = t.start_date || t.startdate || null
+  const milestone = nameOf(t.milestone) || t.milestone_name || null
+  const createdBy = nameOf(t.created_by) || t.created_person || t.created_by_name || null
+  const tags = Array.isArray(t.tags) ? t.tags.map((x) => nameOf(x)).filter(Boolean).join(', ') : (t.tag_names || null)
   const fields = {}
   if (status) fields.Status = status
   if (priority) fields.Priority = priority
   if (owners.length) fields.Owner = owners.join(', ')
   if (tasklist) fields['Task List'] = tasklist
+  if (dueDate) fields['Due Date'] = String(dueDate)
+  if (startDate) fields['Start Date'] = String(startDate)
+  if (milestone) fields.Milestone = String(milestone)
+  if (createdBy) fields['Created By'] = String(createdBy)
+  if (tags) fields.Tags = String(tags)
   if (t.percent_complete != null && t.percent_complete !== '') fields['% Complete'] = String(t.percent_complete)
-  const raw = t.custom_fields || t.customfields || t.custom_field_values || []
+  // Custom fields arrive in several shapes across V3 responses.
+  const raw = t.custom_fields || t.customfields || t.custom_field_values || t.customfield || []
   if (Array.isArray(raw)) {
     for (const c of raw) {
-      const key = c.label_name || c.column_name || c.label || c.name
-      const val = c.value != null ? c.value : c.field_value
-      if (key && val != null && val !== '') fields[key] = String(val)
+      const key = c.label_name || c.label || c.column_name || c.name
+      const val = c.value != null ? c.value : (c.field_value != null ? c.field_value : c.display_value)
+      if (key && val != null && val !== '') fields[key] = String(nameOf(val))
     }
   } else if (raw && typeof raw === 'object') {
-    for (const [key, val] of Object.entries(raw)) if (val != null && val !== '') fields[key] = String(val)
+    for (const [key, val] of Object.entries(raw)) if (val != null && val !== '') fields[key] = String(nameOf(val))
   }
   const proj = t.project || t.project_details || {}
   const url = t.link?.web?.url || t.link?.self?.url || (typeof t.link?.web === 'string' ? t.link.web : null) || null
@@ -272,13 +284,18 @@ function mapProjectTask(t) {
 // project — far more robust than per-project calls (no project-id round-trips).
 export async function listPortalTasks(portalId, accessToken) {
   const out = []
+  const statuses = new Set() // every status seen (incl. closed) for filter options
   for (let page = 1; page <= 10; page++) {
     const d = await projGetV3(`/portal/${portalId}/tasks?per_page=200&page=${page}`, accessToken)
     const arr = d.tasks || d.data || []
-    for (const t of arr) if (!/closed|completed/i.test(closedName(t))) out.push(mapProjectTask(t))
+    for (const t of arr) {
+      const s = closedName(t)
+      if (s) statuses.add(s)
+      if (!/closed|completed/i.test(s)) out.push(mapProjectTask(t)) // display open only
+    }
     if (!(d.page_info?.has_next_page) || !arr.length) break
   }
-  return out
+  return { tasks: out, statuses: [...statuses] }
 }
 
 // Kept for compatibility: tasks in one project (V3).
