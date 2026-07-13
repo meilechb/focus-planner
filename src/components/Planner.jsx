@@ -37,6 +37,9 @@ const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${Strin
 const timeToMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m }
 
 export default function Planner() {
+  // Running inside the Electron desktop shell? Then the focus card is a
+  // separate always-on-top window, so we suppress the in-page one.
+  const inDesktop = typeof window !== 'undefined' && !!window.focusDesktop?.isDesktop
   const [tz, setTz] = useState(() => readCache().tz || DEFAULT_TZ)
   const [projects, setProjects] = useState(() => readCache().projects || [])
   const [blocks, setBlocks] = useState(() => readCache().blocks || {})
@@ -566,13 +569,15 @@ export default function Planner() {
         ))}
       </div>
 
-      {!focusHidden && (
+      {/* In the desktop app the focus card is its own always-on-top OS window,
+          so we don't also render the in-page card. */}
+      {!inDesktop && !focusHidden && (
         <FocusCard focus={focus} now={now}
           onToggleTask={(t) => applyTaskCompletion(t, t.status !== 'completed')}
           onOpenEvent={() => focus.event && setViewEvent(focus.event)}
           onNext={advanceToNext} onHide={() => setFocusHidden(true)} />
       )}
-      {focusHidden && <button className="focus-show" onClick={() => setFocusHidden(false)}><Icon name="focus" size={15} /> Focus</button>}
+      {!inDesktop && focusHidden && <button className="focus-show" onClick={() => setFocusHidden(false)}><Icon name="focus" size={15} /> Focus</button>}
 
       {editProject && <ProjectModal project={editProject} onSave={saveProject} onClose={() => setEditProject(null)} onDelete={deleteProject} />}
       {editBlock && (

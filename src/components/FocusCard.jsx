@@ -13,7 +13,7 @@ function loadBox() {
   }
 }
 
-export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNext, onHide }) {
+export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNext, onHide, windowMode = false }) {
   const [box, setBox] = useState(loadBox)
   const drag = useRef(null)
 
@@ -70,19 +70,23 @@ export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNex
     setBox((b) => { persist(b); return b }) // save once, at the end of the gesture
   }
 
-  const style = {
-    left: box.x ?? 0,
-    top: box.y ?? 0,
-    width: box.w,
-    height: box.h,
-    background: focus.color,
-  }
+  // In window mode the OS window is the frame: fill it and let the native
+  // title-bar drag region move it, so we skip the in-page position/resize box.
+  const style = windowMode
+    ? { background: focus.color }
+    : {
+        left: box.x ?? 0,
+        top: box.y ?? 0,
+        width: box.w,
+        height: box.h,
+        background: focus.color,
+      }
 
   return (
-    <div className="focus-card" style={style}>
-      <div className="focus-head" onPointerDown={(e) => onPointerDown(e, 'move')}>
+    <div className={'focus-card' + (windowMode ? ' focus-card--window' : '')} style={style}>
+      <div className="focus-head" onPointerDown={windowMode ? undefined : (e) => onPointerDown(e, 'move')}>
         <span className="focus-sub">{focus.sub}</span>
-        <button className="focus-x" onClick={onHide} title="Hide" onPointerDown={(e) => e.stopPropagation()}>
+        <button className="focus-x" onClick={onHide} title={windowMode ? 'Hide the focus card' : 'Hide'} onPointerDown={(e) => e.stopPropagation()}>
           <Icon name="x" size={16} />
         </button>
       </div>
@@ -138,7 +142,7 @@ export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNex
         </button>
       </div>
 
-      <div className="focus-resize" onPointerDown={(e) => onPointerDown(e, 'resize')} />
+      {!windowMode && <div className="focus-resize" onPointerDown={(e) => onPointerDown(e, 'resize')} />}
     </div>
   )
 }
