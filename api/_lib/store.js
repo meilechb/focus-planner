@@ -1,23 +1,20 @@
 // Storage + auth + secret-at-rest for Focus Planner.
 //
-// The entire app is a single JSON document. It lives under one key in Upstash
-// Redis (serverless-native KV, generous free tier) when Redis is configured —
-// read = one GET, write = one SET, no per-write operation churn. If Redis is
-// NOT configured, it transparently falls back to the legacy Vercel Blob store
-// so the app keeps working during the switch-over. The first time a
-// Redis-backed read finds nothing, it copies the existing Blob document over
-// (a one-time migration), so no data — including connected accounts — is lost.
-// Refresh tokens inside the doc are encrypted at rest with AES-256-GCM. Single
-// user, so last-write-wins.
+// All app data lives in a single Upstash Redis hash (`focus:doc`). Each piece
+// of state is its own hash field, so a write updates exactly one field
+// atomically (HSET) — two saves to different fields can't clobber each other.
+// Connections are one field holding an array; their refresh tokens are
+// encrypted at rest with AES-256-GCM. Single user, so last-write-wins per
+// field. @upstash/redis serializes JSON automatically (HSET stores objects as
+// JSON, HGETALL returns them parsed).
 
 import crypto from 'node:crypto'
 import { Redis } from '@upstash/redis'
-import { list, put, del } from '@vercel/blob'
 
-// The whole app document lives under this one Redis key.
-const DOC_KEY = 'focus:data'
-// Legacy Vercel Blob prefix (fallback backend + one-time migration source).
-const BLOB_PREFIX = 'focus/data'
+// The app document is a Redis hash. LEGACY_KEY is the previous whole-doc string
+// key; we seed the hash from it once so nothing already stored is lost.
+const HASH_KEY = 'focus:doc'
+const LEGACY_KEY = 'focus:data'
 
 function redisConfigured() {
   return !!(
@@ -34,6 +31,9 @@ function redis() {
   if (_redis) return _redis
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL
   const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN
+  if (!url || !token) {
+    throw new Error('Redis is not configured: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (or the KV_REST_API_* equivalents) in your Vercel project.')
+  }
   _redis = new Redis({ url, token })
   return _redis
 }
@@ -48,9 +48,15 @@ export const DEFAULT_STATE = {
   selectedZoho: [],
 }
 
-function emptyDoc() {
-  return { state: { ...DEFAULT_STATE }, connections: [] }
-}
+export const STATE_KEYS = new Set([
+  'timezone',
+  'projects',
+  'blocks',
+  'favorites',
+  'selectedCalendars',
+  'selectedTaskLists',
+  'selectedZoho',
+])
 
 // ---------------------------------------------------------------------------
 // Secrets
@@ -91,179 +97,57 @@ export function decryptSecret(value) {
 }
 
 // ---------------------------------------------------------------------------
-// Read / write (single JSON doc, last-write-wins). Redis when configured,
-// legacy Vercel Blob otherwise, with a one-time Blob→Redis migration.
+// Read / write (Redis hash: one field per state key + a `connections` field)
 // ---------------------------------------------------------------------------
 
-function normalizeDoc(doc) {
-  if (!doc || typeof doc !== 'object') return null
-  if (!doc.state) doc.state = { ...DEFAULT_STATE }
-  if (!Array.isArray(doc.connections)) doc.connections = []
-  return doc
-}
-
-// A doc with no connections, no blocks and no projects is "blank" — the state
-// you'd get right after a botched migration (an empty default doc written to
-// Redis before the Blob copy ran). We treat that as recoverable: if Blob still
-// holds real data, we re-migrate over the blank Redis doc.
-function isBlankDoc(doc) {
-  if (!doc) return true
-  const hasConns = Array.isArray(doc.connections) && doc.connections.length > 0
-  const hasBlocks = doc.state?.blocks && Object.keys(doc.state.blocks).length > 0
-  const hasProjects = Array.isArray(doc.state?.projects) && doc.state.projects.length > 0
-  return !hasConns && !hasBlocks && !hasProjects
-}
-
-// Newest Blob version (immutable URL, always fresh). Returns null if there are
-// no versions yet; throws on an actual fetch/parse failure so a write never
-// runs against wrongly-empty data.
-async function blobReadNewest() {
-  const r = await list({ prefix: BLOB_PREFIX })
-  const blobs = (r.blobs || []).sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt))
-  if (!blobs.length) return null
-  const res = await fetch(blobs[0].url)
-  if (!res.ok) throw new Error(`blob read failed: ${res.status}`)
-  const doc = normalizeDoc(JSON.parse(await res.text()))
-  if (!doc) throw new Error('blob parse failed')
-  return doc
-}
-
-async function blobWrite(doc) {
-  const written = await put(`${BLOB_PREFIX}.json`, JSON.stringify(doc), {
-    access: 'public',
-    addRandomSuffix: true,
-    contentType: 'application/json',
-  })
-  // Delete only versions older than the one we just wrote (never a concurrent
-  // writer's newer version).
-  try {
-    const r = await list({ prefix: BLOB_PREFIX })
-    const blobs = (r.blobs || []).sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt))
-    const idx = blobs.findIndex((b) => b.url === written.url)
-    if (idx !== -1) {
-      const stale = blobs.slice(idx + 1).map((b) => b.url)
-      if (stale.length) await del(stale)
-    }
-  } catch {}
-}
-
-async function readDoc() {
-  if (redisConfigured()) {
-    // @upstash/redis auto-serializes JSON: get() returns the parsed object (or
-    // null when the key doesn't exist yet).
-    const doc = normalizeDoc(await redis().get(DOC_KEY))
-    if (doc && !isBlankDoc(doc)) return { doc }
-    // Redis is empty OR blank (e.g. a default doc got written before migration
-    // ran). Recover from the legacy Blob store: if it still holds real data,
-    // copy it into Redis so blocks, settings AND connected accounts carry over
-    // without anyone having to reconnect.
-    try {
-      const legacy = await blobReadNewest()
-      if (legacy && !isBlankDoc(legacy)) {
-        try { await redis().set(DOC_KEY, legacy) } catch {}
-        return { doc: legacy }
-      }
-    } catch {}
-    return { doc: doc || emptyDoc(), empty: !doc }
-  }
-  // Redis not configured yet — keep working off the legacy Blob store.
-  const doc = await blobReadNewest()
-  if (!doc) return { doc: emptyDoc(), empty: true }
-  return { doc }
-}
-
-// Read the whole doc (for GET /api/data). Refresh tokens are NOT decrypted here.
-export async function loadDoc() {
-  const { doc } = await readDoc()
-  return doc
-}
-
-// Safe storage snapshot for debugging — counts and flags only, never secrets
-// or actual content. Used by the temporary /api/diag endpoint.
-function summarizeDoc(doc) {
-  const blocks = doc.state?.blocks || {}
-  return {
-    present: true,
-    blockDays: Object.keys(blocks).length,
-    totalBlocks: Object.values(blocks).reduce((n, a) => n + (Array.isArray(a) ? a.length : 0), 0),
-    projects: Array.isArray(doc.state?.projects) ? doc.state.projects.length : 0,
-    favorites: Array.isArray(doc.state?.favorites) ? doc.state.favorites.length : 0,
-    connections: Array.isArray(doc.connections)
-      ? doc.connections.map((c) => ({ provider: c.provider, email: c.account_email || null, hasToken: !!c.refresh_token }))
-      : [],
-  }
-}
-
-// Force-copy the legacy Blob document into Redis (recovery tool). Overwrites
-// Redis only when Blob is readable and actually holds data, so it's safe to
-// trigger deliberately after the Blob store has been made readable again.
-export async function restoreFromBlob() {
-  if (!redisConfigured()) return { ok: false, reason: 'Redis is not configured' }
+// One-time seed: if the hash is empty but the old whole-doc string key holds a
+// value, copy it into the hash so pre-existing data isn't stranded.
+async function seedFromLegacy() {
   let legacy
-  try {
-    legacy = await blobReadNewest()
-  } catch (e) {
-    return { ok: false, reason: 'Blob is not readable yet: ' + String(e.message || e) }
-  }
-  if (!legacy) return { ok: false, reason: 'No data found in the Blob store' }
-  if (isBlankDoc(legacy)) return { ok: false, reason: 'The Blob store has no real data to restore' }
-  await redis().set(DOC_KEY, legacy)
-  return { ok: true, restored: summarizeDoc(legacy) }
+  try { legacy = await redis().get(LEGACY_KEY) } catch { return null }
+  if (!legacy || typeof legacy !== 'object') return null
+  const state = { ...DEFAULT_STATE, ...(legacy.state || {}) }
+  const connections = Array.isArray(legacy.connections) ? legacy.connections : []
+  const fields = {}
+  for (const k of STATE_KEYS) fields[k] = state[k]
+  fields.connections = connections
+  try { await redis().hset(HASH_KEY, fields) } catch {}
+  return { state, connections }
 }
 
-export async function diagnostics() {
-  const out = {
-    redisConfigured: redisConfigured(),
-    blobTokenPresent: !!process.env.BLOB_READ_WRITE_TOKEN,
+// The whole document: { state, connections }.
+async function readAll() {
+  const h = await redis().hgetall(HASH_KEY)
+  if (!h || Object.keys(h).length === 0) {
+    const seeded = await seedFromLegacy()
+    if (seeded) return seeded
+    return { state: { ...DEFAULT_STATE }, connections: [] }
   }
-  if (redisConfigured()) {
-    try {
-      const raw = normalizeDoc(await redis().get(DOC_KEY))
-      out.redis = raw ? { ...summarizeDoc(raw), blank: isBlankDoc(raw) } : { present: false }
-    } catch (e) { out.redisError = String(e.message || e) }
-  }
-  try {
-    const b = await blobReadNewest()
-    out.blob = b ? { ...summarizeDoc(b), blank: isBlankDoc(b) } : { present: false }
-  } catch (e) { out.blobError = String(e.message || e) }
-  return out
+  const state = { ...DEFAULT_STATE }
+  for (const k of STATE_KEYS) if (h[k] !== undefined && h[k] !== null) state[k] = h[k]
+  const connections = Array.isArray(h.connections) ? h.connections : []
+  return { state, connections }
 }
 
-// Read, apply `mutator`, write the whole doc back. Single-user app, so
-// last-write-wins is fine.
-async function mutateDoc(mutator) {
-  const { doc } = await readDoc()
-  const result = mutator(doc)
-  if (redisConfigured()) await redis().set(DOC_KEY, doc)
-  else await blobWrite(doc)
-  return result
+async function readConnections() {
+  const c = await redis().hget(HASH_KEY, 'connections')
+  return Array.isArray(c) ? c : []
 }
 
 // ---------------------------------------------------------------------------
 // State access
 // ---------------------------------------------------------------------------
 
-export const STATE_KEYS = new Set([
-  'timezone',
-  'projects',
-  'blocks',
-  'favorites',
-  'selectedCalendars',
-  'selectedTaskLists',
-  'selectedZoho',
-])
-
 // Public state = everything the browser is allowed to see (no secrets).
 export async function getPublicState() {
-  const doc = await loadDoc()
-  return doc.state
+  const { state } = await readAll()
+  return state
 }
 
+// Write exactly one state field, atomically.
 export async function writeStateKey(key, value) {
   if (!STATE_KEYS.has(key)) throw new Error('invalid state key: ' + key)
-  return mutateDoc((doc) => {
-    doc.state[key] = value
-  })
+  await redis().hset(HASH_KEY, { [key]: value })
 }
 
 // ---------------------------------------------------------------------------
@@ -276,46 +160,66 @@ function publicConnection(c) {
 }
 
 export async function listConnections() {
-  const doc = await loadDoc()
-  return doc.connections.map(publicConnection)
+  const conns = await readConnections()
+  return conns.map(publicConnection)
 }
 
 // Full connection incl. DECRYPTED refresh token — server-side only.
 export async function getConnection(id) {
-  const doc = await loadDoc()
-  const c = doc.connections.find((x) => x.id === id)
+  const conns = await readConnections()
+  const c = conns.find((x) => x.id === id)
   if (!c) return null
   return { ...c, refresh_token: decryptSecret(c.refresh_token) }
 }
 
 // Upsert on (provider, account_email). Encrypts the refresh token at rest.
 export async function saveConnection(conn) {
-  return mutateDoc((doc) => {
-    const stored = {
-      ...conn,
-      refresh_token: encryptSecret(conn.refresh_token),
-    }
-    // Upsert only when we have a real email to match on; otherwise (email
-    // lookup failed) always insert as a distinct connection so two unknown
-    // accounts don't collide on (provider, null) and overwrite each other.
-    const idx = conn.account_email
-      ? doc.connections.findIndex((x) => x.provider === conn.provider && x.account_email === conn.account_email)
-      : -1
-    if (idx >= 0) {
-      stored.id = doc.connections[idx].id // keep stable id
-      doc.connections[idx] = stored
-    } else {
-      stored.id = conn.id || crypto.randomUUID()
-      doc.connections.push(stored)
-    }
-    return publicConnection(stored)
-  })
+  const connections = await readConnections()
+  const stored = { ...conn, refresh_token: encryptSecret(conn.refresh_token) }
+  // Upsert only when we have a real email to match on; otherwise (email lookup
+  // failed) always insert as a distinct connection so two unknown accounts
+  // don't collide on (provider, null) and overwrite each other.
+  const idx = conn.account_email
+    ? connections.findIndex((x) => x.provider === conn.provider && x.account_email === conn.account_email)
+    : -1
+  if (idx >= 0) {
+    stored.id = connections[idx].id // keep stable id
+    connections[idx] = stored
+  } else {
+    stored.id = conn.id || crypto.randomUUID()
+    connections.push(stored)
+  }
+  await redis().hset(HASH_KEY, { connections })
+  return publicConnection(stored)
 }
 
 export async function deleteConnection(id) {
-  return mutateDoc((doc) => {
-    doc.connections = doc.connections.filter((x) => x.id !== id)
-  })
+  const connections = (await readConnections()).filter((x) => x.id !== id)
+  await redis().hset(HASH_KEY, { connections })
+}
+
+// ---------------------------------------------------------------------------
+// Health check (counts and flags only — never tokens or content)
+// ---------------------------------------------------------------------------
+
+export async function diagnostics() {
+  const out = { store: 'redis-hash', redisConfigured: redisConfigured() }
+  try {
+    const { state, connections } = await readAll()
+    const blocks = state.blocks || {}
+    out.ok = true
+    out.data = {
+      blockDays: Object.keys(blocks).length,
+      totalBlocks: Object.values(blocks).reduce((n, a) => n + (Array.isArray(a) ? a.length : 0), 0),
+      projects: Array.isArray(state.projects) ? state.projects.length : 0,
+      favorites: Array.isArray(state.favorites) ? state.favorites.length : 0,
+      connections: connections.map((c) => ({ provider: c.provider, email: c.account_email || null, hasToken: !!c.refresh_token })),
+    }
+  } catch (e) {
+    out.ok = false
+    out.error = String(e.message || e)
+  }
+  return out
 }
 
 // ---------------------------------------------------------------------------
