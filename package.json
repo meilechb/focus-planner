@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@vercel/blob": "^2.6.1",
+    "@upstash/redis": "^1.38.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

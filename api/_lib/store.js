@@ -1,21 +1,31 @@
 // Storage + auth + secret-at-rest for Focus Planner.
 //
-// The entire app is a single JSON document in a Vercel Blob store (standard
-// "public" access — private access returned 400 on this store, and it works on
-// every plan). The blob's URL is not exposed by any endpoint, and refresh
-// tokens inside the doc are still encrypted at rest with AES-256-GCM, so a
-// leaked blob yields no usable secrets. Reads bypass the CDN cache (unique
-// query param) for read-after-write freshness. Writes use optimistic
-// concurrency (ETag ifMatch) with a bounded retry so overlapping invocations
-// cannot silently clobber each other.
+// The entire app is a single JSON document stored under one key in Upstash
+// Redis (a serverless-native key/value store with a generous free tier). Read
+// = one GET, write = one SET — no per-write operation churn. Refresh tokens
+// inside the doc are encrypted at rest with AES-256-GCM, so the stored value
+// yields no usable secrets on its own. Single user, so last-write-wins.
 
 import crypto from 'node:crypto'
-import { list, put, del } from '@vercel/blob'
+import { Redis } from '@upstash/redis'
 
-// Each write creates a new uniquely-suffixed blob under this prefix; reads pick
-// the newest via the live list() API and fetch its immutable URL. This sidesteps
-// Vercel Blob's CDN cache (which would otherwise serve a stale fixed-path file).
-const BLOB_PREFIX = 'focus/data'
+// The whole app document lives under this one Redis key.
+const DOC_KEY = 'focus:data'
+
+// Lazily build the Redis client from env. Supports both the Upstash-native
+// variable names and Vercel's KV integration names, so whichever way the store
+// is connected in the Vercel dashboard works without code changes.
+let _redis = null
+function redis() {
+  if (_redis) return _redis
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN
+  if (!url || !token) {
+    throw new Error('Redis is not configured: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (or the KV_REST_API_* equivalents) in your Vercel project.')
+  }
+  _redis = new Redis({ url, token })
+  return _redis
+}
 
 export const DEFAULT_STATE = {
   timezone: 'America/New_York',
@@ -70,31 +80,14 @@ export function decryptSecret(value) {
 }
 
 // ---------------------------------------------------------------------------
-// Blob read / write (private store, optimistic concurrency)
+// Redis read / write (single JSON doc, last-write-wins)
 // ---------------------------------------------------------------------------
 
-async function listVersions() {
-  const r = await list({ prefix: BLOB_PREFIX })
-  const blobs = r.blobs || []
-  blobs.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt)) // newest first
-  return blobs
-}
-
 async function readDoc() {
-  const blobs = await listVersions()
-  // No versions at all = genuinely empty (first run). This is the ONLY case
-  // where we may treat the doc as empty; a fetch/parse failure must throw so a
-  // write never runs against empty data and wipes the real versions.
-  if (!blobs.length) return { doc: emptyDoc(), empty: true }
-  const res = await fetch(blobs[0].url) // unique, immutable URL — always fresh
-  if (!res.ok) throw new Error(`blob read failed: ${res.status}`)
-  const text = await res.text()
-  let doc
-  try {
-    doc = JSON.parse(text)
-  } catch {
-    throw new Error('blob parse failed')
-  }
+  // @upstash/redis auto-serializes JSON: set(obj) stores JSON, get() returns
+  // the parsed object (or null when the key doesn't exist yet).
+  const doc = await redis().get(DOC_KEY)
+  if (!doc || typeof doc !== 'object') return { doc: emptyDoc(), empty: true }
   if (!doc.state) doc.state = { ...DEFAULT_STATE }
   if (!Array.isArray(doc.connections)) doc.connections = []
   return { doc }
@@ -106,27 +99,12 @@ export async function loadDoc() {
   return doc
 }
 
-// Read newest, apply `mutator`, write a fresh version, then delete older ones.
-// Single-user app, so last-write-wins is fine.
+// Read, apply `mutator`, write the whole doc back. Single-user app, so
+// last-write-wins is fine.
 async function mutateDoc(mutator) {
   const { doc } = await readDoc()
   const result = mutator(doc)
-  const written = await put(`${BLOB_PREFIX}.json`, JSON.stringify(doc), {
-    access: 'public',
-    addRandomSuffix: true,
-    contentType: 'application/json',
-  })
-  // Clean up ONLY versions older than the one we just wrote — never newer ones
-  // (a concurrent writer's version), so overlapping writes can't delete each
-  // other's data. Newest-first list; keep our write and anything above it.
-  try {
-    const all = await listVersions() // newest first
-    const ourIdx = all.findIndex((b) => b.url === written.url)
-    if (ourIdx !== -1) {
-      const stale = all.slice(ourIdx + 1).map((b) => b.url)
-      if (stale.length) await del(stale)
-    }
-  } catch {}
+  await redis().set(DOC_KEY, doc)
   return result
 }
 
