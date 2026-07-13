@@ -18,7 +18,9 @@ export function signState(payload) {
 }
 
 // Returns the decoded payload if valid & unexpired, else null.
-export function verifyState(state, maxAgeSeconds = 600) {
+// 1 hour: a user may sit on the Google/Zoho consent screen for a while, and a
+// still-valid OAuth code shouldn't be rejected just because our nonce aged out.
+export function verifyState(state, maxAgeSeconds = 3600) {
   if (!state || typeof state !== 'string') return null
   const parts = state.split('.')
   if (parts.length !== 2) return null

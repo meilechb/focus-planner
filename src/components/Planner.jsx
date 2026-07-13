@@ -29,10 +29,23 @@ const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, proj
 // sidebar section, and the focus card ALL use this — so a Google task is the
 // same color everywhere. Users can override per source in Settings.
 const DEFAULT_COLORS = { google: '#2563eb', 'zoho-crm': '#e42527', 'zoho-projects': '#e8590c' }
-const COLOR_CHOICES = ['#2563eb', '#0f9d58', '#e8590c', '#e42527', '#8e24aa', '#0891b2', '#d97706', '#616161']
+const COLOR_CHOICES = ['#6d5efc', '#ff6b9d', '#14c8a6', '#ffa63d', '#ff5a5f', '#00b8d9', '#7c4dff', '#8892a6']
 function srcKey(gid) { return gid === 'zoho-crm' ? 'zoho-crm' : gid === 'zoho-projects' ? 'zoho-projects' : 'google' }
 function srcColor(navCfg, gid) { const k = srcKey(gid); return (navCfg?.colors && navCfg.colors[k]) || DEFAULT_COLORS[k] }
-function readNavCfg() { try { return { ...DEFAULT_NAVCFG, ...JSON.parse(localStorage.getItem(NAVCFG_KEY) || '{}') } } catch { return { ...DEFAULT_NAVCFG } } }
+function readNavCfg() {
+  try {
+    const p = JSON.parse(localStorage.getItem(NAVCFG_KEY) || '{}')
+    // Deep-merge the nested objects so a partially-stored config doesn't drop
+    // whole default sections (modules/filters/colors/buffers).
+    return {
+      ...DEFAULT_NAVCFG, ...p,
+      modules: { ...DEFAULT_NAVCFG.modules, ...(p.modules || {}) },
+      filters: { ...DEFAULT_NAVCFG.filters, ...(p.filters || {}) },
+      colors: { ...DEFAULT_NAVCFG.colors, ...(p.colors || {}) },
+      buffers: { ...DEFAULT_NAVCFG.buffers, ...(p.buffers || {}) },
+    }
+  } catch { return { ...DEFAULT_NAVCFG } }
+}
 const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 const timeToMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m }
 
@@ -54,6 +67,8 @@ export default function Planner() {
     toastTimers.current[id] = setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500)
   }
   function dismissToast(id) { clearTimeout(toastTimers.current[id]); setToasts((t) => t.filter((x) => x.id !== id)) }
+  // Clear any outstanding toast timers on unmount (no setState-after-unmount).
+  useEffect(() => () => { for (const t of Object.values(toastTimers.current)) clearTimeout(t) }, [])
 
   const [calAccounts, setCalAccounts] = useState(() => readCache().calAccounts || [])
   const [taskAccounts, setTaskAccounts] = useState(() => readCache().taskAccounts || [])
@@ -150,8 +165,16 @@ export default function Planner() {
         setBlocks(mergedBlocks)
         setProjects(mergedProjects)
         setFavorites(mergedFavorites)
-        // Push up only what the local backup added beyond the server.
-        if (JSON.stringify(mergedBlocks) !== JSON.stringify(serverBlocks)) saveKey('blocks', mergedBlocks)
+        // Push up only what the local backup actually added beyond the server.
+        // Compare by day-key count + per-day length (order-independent) so we
+        // don't rewrite blocks to the server on every single load.
+        const blocksDiffer = () => {
+          const sk = Object.keys(serverBlocks), mk = Object.keys(mergedBlocks)
+          if (mk.length !== sk.length) return true
+          for (const k of mk) if ((mergedBlocks[k]?.length || 0) !== (serverBlocks[k]?.length || 0)) return true
+          return false
+        }
+        if (blocksDiffer()) saveKey('blocks', mergedBlocks)
         if (mergedProjects.length !== (state.projects || []).length) saveKey('projects', mergedProjects)
         if (mergedFavorites.length !== (state.favorites || []).length) saveKey('favorites', mergedFavorites)
       } catch { setStorageOk(false) }
@@ -253,7 +276,9 @@ export default function Planner() {
   }
 
   useEffect(() => {
-    if (!connected || !selectedCalendars.length) return
+    // No calendars selected → clear any previously-fetched meetings so they
+    // don't linger on the grid after the user deselects everything.
+    if (!connected || !selectedCalendars.length) { setEventsByDate((prev) => (Object.keys(prev).length ? {} : prev)); return }
     let alive = true
     api.post('/api/google/data', { action: 'eventsRange', startISO: range.start, endISO: range.end, cals: calsPayload() })
       .then((r) => { if (alive) mergeEvents(range.start, range.end, r.events || []) })
@@ -309,7 +334,9 @@ export default function Planner() {
         e.preventDefault(); undoBlocks(); return
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return
-      if (e.target.closest && e.target.closest('input, textarea, .modal')) return
+      // Don't let view shortcuts fire while any modal/overlay is open — the
+      // full-screen Settings uses .settings-modal, not .modal.
+      if (e.target.closest && e.target.closest('input, textarea, .modal, .modal-backdrop, .settings-modal, [role=dialog]')) return
       const k = e.key.toLowerCase()
       const nav = (dir) => setViewDate((v) => (view === 'month' ? addMonths(v, dir) : addDays(v, dir * (view === 'week' ? 7 : 1))))
       if (k === 't') setViewDate(today)
@@ -364,7 +391,9 @@ export default function Planner() {
         const [key, value] = pending.current.entries().next().value
         try {
           await api.post('/api/data', { key, value })
-          pending.current.delete(key) // only drop once persisted
+          // Only drop if a newer save for this key didn't arrive mid-request —
+          // otherwise we'd discard the newer value and never persist it.
+          if (pending.current.get(key) === value) pending.current.delete(key)
           setStorageOk(true)
         } catch {
           setStorageOk(false) // keep it queued and retry shortly
@@ -465,6 +494,13 @@ export default function Planner() {
     const next = todays.find((b) => b.start > ref)
     if (next) setOverrideBlockId(next.id)
   }
+  // Resume live "now" tracking once the previewed block has ended (or vanished,
+  // or the day rolled over) — otherwise the focus card stays pinned to it.
+  useEffect(() => {
+    if (!overrideBlockId) return
+    const b = (blocks[today] || []).find((x) => x.id === overrideBlockId)
+    if (!b || now >= b.end) setOverrideBlockId(null)
+  }, [now, today, blocks, overrideBlockId])
   function applyTaskCompletion(task, completed) {
     const { connId, listId, id: taskId, source } = task
     const status = completed ? 'completed' : 'needsAction'
@@ -481,7 +517,7 @@ export default function Planner() {
   function blockFromPayload(payload, start, end) {
     if (payload.kind === 'project') return { id: uuid(), start, end, projectId: payload.projectId }
     if (payload.kind === 'task') return { id: uuid(), start, end, color: payload.color, tasks: [payload.task] }
-    if (payload.kind === 'batch') return { id: uuid(), start, end, title: payload.title, color: payload.color || '#2563eb', tasks: payload.tasks }
+    if (payload.kind === 'batch') return { id: uuid(), start, end, title: payload.title, color: payload.color || ACCENT, tasks: payload.tasks }
     return null
   }
 
@@ -593,7 +629,13 @@ export default function Planner() {
           onOpenEvent={() => focus.event && setViewEvent(focus.event)}
           onNext={advanceToNext} onHide={() => setFocusHidden(true)} />
       )}
-      {!inDesktop && focusHidden && <button className="focus-show" onClick={() => setFocusHidden(false)}><Icon name="focus" size={15} /> Focus</button>}
+      {!inDesktop && focusHidden && (
+        <button className="focus-show" onClick={() => setFocusHidden(false)} style={{ '--fc': focus.color }} title={`${focus.label} — click to expand`}>
+          <span className="focus-show-dot" style={{ background: focus.color }} />
+          <span className="focus-show-txt">{focus.label}</span>
+          <Icon name="focus" size={14} />
+        </button>
+      )}
 
       {editProject && <ProjectModal project={editProject} onSave={saveProject} onClose={() => setEditProject(null)} onDelete={deleteProject} />}
       {editBlock && (
@@ -730,7 +772,7 @@ function DayGrid({ day, today, now, zoom, bufferCfg, blocks, meetings, blockColo
   return (
     <div className="cal-scroll" ref={scrollRef}>
       <div className="grid" ref={ref} style={{ height }}
-        onDoubleClick={(e) => { if (e.target === ref.current) { const s = fitDrop(occAll(), yToMin(e.clientY), 60); if (s) onCreateAt(s.start, s.end) } }}
+        onDoubleClick={(e) => { const t = e.target; const empty = t === ref.current || t.classList?.contains('hour-row') || t.classList?.contains('hour-label'); if (empty) { const s = fitDrop(occAll(), yToMin(e.clientY), 60); if (s) onCreateAt(s.start, s.end) } }}
         onMouseMove={(e) => { if (drag.current) return; const t = e.target; const empty = t === ref.current || t.classList?.contains('hour-row') || t.classList?.contains('hour-label'); if (empty) { const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHover(s) } else if (hover) setHover(null) }}
         onMouseLeave={() => setHover(null)}
         onDragOver={(e) => { e.preventDefault(); setHover(null); const s = fitDrop(occAll(), yToMin(e.clientY), 60); setHint(s || { start: yToMin(e.clientY), end: yToMin(e.clientY) + SNAP_MIN, none: true }) }}
@@ -987,15 +1029,9 @@ function Sidebar(props) {
     <aside className="sidebar">
       <div className="brand"><span className="dot" /> Focus Planner</div>
 
-      <div className="sb-search">
-        <Icon name="search" size={15} className="search-ic" />
-        <input className="field" placeholder="Search everything…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} />
-        {taskSearch && <button className="sb-search-x" onClick={() => setTaskSearch('')}><Icon name="x" size={14} /></button>}
-      </div>
-
       {favorites.length > 0 && (
         <div className="sb-pinned">
-          <div className="sbx-label"><span className="sbx-label-ic" style={{ '--c': '#f5b301' }}><Icon name="star" size={12} filled /></span> Favorites <span className="sbx-count">{favorites.length}</span></div>
+          <div className="sbx-label mini"><span className="sbx-label-ic" style={{ '--c': '#f5b301' }}><Icon name="star" size={11} filled /></span> Favorites <span className="sbx-count">{favorites.length}</span></div>
           <div className="fav-grid">
             {favorites.filter((f) => !taskSearch || (f.label || '').toLowerCase().includes(taskSearch.toLowerCase())).map((f) => (
               <div key={f.id} className="fav-card" style={{ background: f.color }} draggable onDragStart={(e) => dragFav(e, f)}
@@ -1008,6 +1044,12 @@ function Sidebar(props) {
           </div>
         </div>
       )}
+
+      <div className="sb-search">
+        <Icon name="search" size={15} className="search-ic" />
+        <input className="field" placeholder="Search everything…" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} />
+        {taskSearch && <button className="sb-search-x" onClick={() => setTaskSearch('')}><Icon name="x" size={14} /></button>}
+      </div>
 
       <div className="sb-scroll">
         <div className="sbx-label">

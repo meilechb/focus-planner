@@ -40,7 +40,9 @@ export default function FocusWindow() {
   const cache = read(CACHE_KEY)
   const nav = read(NAVCFG_KEY)
   const buffers = nav.buffers || DEFAULT_BUFFERS
-  const tz = cache.tz
+  // Match the planner's default so the floating card computes the same
+  // "today"/"now" when the cache hasn't recorded a timezone yet.
+  const tz = cache.tz || 'America/New_York'
   const today = localDateISO(new Date(), tz)
   const now = nowMinutes(tz)
   const todays = (cache.blocks && cache.blocks[today]) || []

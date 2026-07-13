@@ -144,9 +144,18 @@ export async function getPublicState() {
   return state
 }
 
+// Shape guard so a malformed write can't poison the store (e.g. a string where
+// the UI expects an object/array, which would then crash reads).
+function validStateValue(key, value) {
+  if (key === 'timezone') return typeof value === 'string'
+  if (key === 'blocks') return value != null && typeof value === 'object' && !Array.isArray(value)
+  return Array.isArray(value) // projects, favorites, selected*
+}
+
 // Write exactly one state field, atomically.
 export async function writeStateKey(key, value) {
   if (!STATE_KEYS.has(key)) throw new Error('invalid state key: ' + key)
+  if (!validStateValue(key, value)) throw new Error('invalid value for ' + key)
   await redis().hset(HASH_KEY, { [key]: value })
 }
 
@@ -213,7 +222,8 @@ export async function diagnostics() {
       totalBlocks: Object.values(blocks).reduce((n, a) => n + (Array.isArray(a) ? a.length : 0), 0),
       projects: Array.isArray(state.projects) ? state.projects.length : 0,
       favorites: Array.isArray(state.favorites) ? state.favorites.length : 0,
-      connections: connections.map((c) => ({ provider: c.provider, email: c.account_email || null, hasToken: !!c.refresh_token })),
+      // No emails or other account identifiers here — /api/diag is unauthenticated.
+      connections: connections.map((c) => ({ provider: c.provider, hasToken: !!c.refresh_token })),
     }
   } catch (e) {
     out.ok = false

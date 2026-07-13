@@ -4,8 +4,8 @@ import { toLocalMinutes, localDateISO, nowMinutes } from '../../shared/time.js'
 export { toLocalMinutes, localDateISO, nowMinutes }
 
 export const PALETTE = [
-  '#D50000', '#E67C00', '#F09300', '#33B679', '#0B8043',
-  '#039BE5', '#3F51B5', '#7986CB', '#8E24AA', '#616161',
+  '#6d5efc', '#ff6b9d', '#14c8a6', '#ffa63d', '#ff5a5f',
+  '#00b8d9', '#7c4dff', '#f6c445', '#36b37e', '#8892a6',
 ]
 
 export const DAY_START = 7 * 60 // 7:00am
@@ -13,7 +13,7 @@ export const DAY_END = 22 * 60 // 10:00pm
 export const SNAP_MIN = 15
 export const BUFFER_MIN = 15
 
-export const ACCENT = '#1A73E8'
+export const ACCENT = '#6d5efc'
 
 // --- date helpers (operate on "YYYY-MM-DD" strings) -------------------------
 
@@ -237,7 +237,7 @@ export function computeFocus({ blocks = [], meetings = [], buffers = [], now, pr
     return {
       color: '#E67C00',
       label: buffer.forTitle || 'Upcoming meeting',
-      sub: `Prep · ${BUFFER_MIN} min`,
+      sub: `${buffer.kind === 'after' ? 'Wrap-up' : 'Prep'} · ${buffer.end - buffer.start} min`,
       tasks: [],
       block: null,
     }

@@ -2,20 +2,23 @@
    Focus Planner — design system
    ============================================================ */
 :root {
-  --accent: #2563eb;
-  --accent-weak: #eaf1fe;
-  --accent-ink: #1d4ed8;
-  --ink: #1a1f2b;
-  --ink-2: #3a4256;
-  --muted: #6b7280;
-  --faint: #9aa1ad;
-  --line: #e8eaee;
-  --line-2: #f0f1f4;
-  --bg: #f6f7f9;
+  --accent: #6d5efc;
+  --accent-weak: #efecff;
+  --accent-ink: #5a49ea;
+  --accent2: #ff6b9d;
+  --accent3: #14c8a6;
+  --grad-brand: linear-gradient(135deg, #8b7bff 0%, #6d5efc 55%, #c04bff 120%);
+  --ink: #1c2030;
+  --ink-2: #414964;
+  --muted: #71778a;
+  --faint: #a2a7b8;
+  --line: #e9e8f1;
+  --line-2: #f2f1f8;
+  --bg: #f4f3fb;
   --panel: #ffffff;
-  --panel-2: #fbfbfc;
-  --danger: #dc2626;
-  --ok: #059669;
+  --panel-2: #faf9ff;
+  --danger: #e5484d;
+  --ok: #12b886;
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.05);
   --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 2px 4px rgba(16, 24, 40, 0.04);
   --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.16);
@@ -33,20 +36,24 @@
    light), or when they explicitly pick dark in Settings. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --accent: #4b8bff; --accent-weak: rgba(75,139,255,.16); --accent-ink: #9dc0ff;
-    --ink: #e7e9ee; --ink-2: #c3c8d3; --muted: #8b93a3; --faint: #646c7b;
-    --line: #2b303b; --line-2: #222732; --bg: #101319; --panel: #1a1e26; --panel-2: #20242e;
+    --accent: #9d8bff; --accent-weak: rgba(157,139,255,.18); --accent-ink: #b9acff;
+    --accent2: #ff7fab; --accent3: #2ee0bd;
+    --grad-brand: linear-gradient(135deg, #a596ff 0%, #8b7bff 55%, #c877ff 120%);
+    --ink: #e8e8f2; --ink-2: #c5c8d6; --muted: #8b90a3; --faint: #646980;
+    --line: #2c2b3a; --line-2: #232232; --bg: #0f0e17; --panel: #191826; --panel-2: #201f30;
     --danger: #f0616a; --ok: #35c98a;
-    --input-bg: #232833; --card: #232833; --scroll: #363c48; --scroll-hover: #454c5a;
+    --input-bg: #232233; --card: #232233; --scroll: #383650; --scroll-hover: #4a4766;
     --shadow-sm: 0 1px 2px rgba(0,0,0,.3); --shadow-md: 0 4px 14px rgba(0,0,0,.4); --shadow-lg: 0 16px 40px rgba(0,0,0,.55);
   }
 }
 :root[data-theme='dark'] {
-  --accent: #4b8bff; --accent-weak: rgba(75,139,255,.16); --accent-ink: #9dc0ff;
-  --ink: #e7e9ee; --ink-2: #c3c8d3; --muted: #8b93a3; --faint: #646c7b;
-  --line: #2b303b; --line-2: #222732; --bg: #101319; --panel: #1a1e26; --panel-2: #20242e;
+  --accent: #9d8bff; --accent-weak: rgba(157,139,255,.18); --accent-ink: #b9acff;
+  --accent2: #ff7fab; --accent3: #2ee0bd;
+  --grad-brand: linear-gradient(135deg, #a596ff 0%, #8b7bff 55%, #c877ff 120%);
+  --ink: #e8e8f2; --ink-2: #c5c8d6; --muted: #8b90a3; --faint: #646980;
+  --line: #2c2b3a; --line-2: #232232; --bg: #0f0e17; --panel: #191826; --panel-2: #201f30;
   --danger: #f0616a; --ok: #35c98a;
-  --input-bg: #232833; --card: #232833; --scroll: #363c48; --scroll-hover: #454c5a;
+  --input-bg: #232233; --card: #232233; --scroll: #383650; --scroll-hover: #4a4766;
   --shadow-sm: 0 1px 2px rgba(0,0,0,.3); --shadow-md: 0 4px 14px rgba(0,0,0,.4); --shadow-lg: 0 16px 40px rgba(0,0,0,.55);
 }
 
@@ -135,13 +142,17 @@ button:disabled, .btn.disabled, a.disabled { cursor: not-allowed; }
   .topbar .density { display: none; }
   .welcome-h { font-size: 22px; }
 }
-.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); padding: 14px; }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; padding: 14px;
+  background:
+    radial-gradient(1100px 520px at 100% -5%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 55%),
+    radial-gradient(900px 480px at -8% 108%, color-mix(in srgb, var(--accent2) 7%, transparent), transparent 55%),
+    var(--bg); }
 .main-card { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-sm); overflow: hidden; }
 
 /* First-run welcome / empty state */
 .welcome-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; background: linear-gradient(180deg, rgba(255,255,255,.72), rgba(255,255,255,.94)); backdrop-filter: blur(3px); z-index: 5; }
 .welcome-card { max-width: 460px; text-align: center; display: flex; flex-direction: column; align-items: center; animation: toast-in .3s cubic-bezier(.2,.8,.2,1); }
-.welcome-badge { width: 56px; height: 56px; border-radius: 16px; background: linear-gradient(135deg, #5b9dff, #2563eb); display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 22px rgba(37,99,235,.35); margin-bottom: 20px; }
+.welcome-badge { width: 56px; height: 56px; border-radius: 16px; background: var(--grad-brand); display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 40%, transparent); margin-bottom: 20px; }
 .welcome-badge .dot { width: 22px; height: 22px; border-radius: 7px; background: #fff; }
 .welcome-h { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 10px; color: var(--ink); line-height: 1.15; }
 .welcome-p { font-size: 15px; line-height: 1.5; color: var(--muted); margin: 0 0 24px; max-width: 40ch; }
@@ -154,8 +165,8 @@ button:disabled, .btn.disabled, a.disabled { cursor: not-allowed; }
 
 /* ---- sidebar ---- */
 .sidebar { background: var(--panel); border-right: 1px solid var(--line); overflow: hidden; display: flex; flex-direction: column; }
-.sb-pinned { flex: none; border-bottom: 1px solid var(--line-2); padding: 6px 12px 12px; }
-.sb-search { position: relative; display: flex; align-items: center; margin: 12px 12px 6px; }
+.sb-pinned { flex: none; padding: 2px 10px 4px; }
+.sb-search { position: relative; display: flex; align-items: center; margin: 2px 10px 8px; }
 .sb-search .field { padding: 9px 30px 9px 34px; font-size: 13px; }
 .sb-search .search-ic { position: absolute; left: 11px; color: var(--faint); pointer-events: none; }
 .sb-search-x { position: absolute; right: 6px; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border: none; background: none; color: var(--muted); border-radius: 6px; }
@@ -210,7 +221,7 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 
 /* brand + sidebar depth */
 .brand { border-bottom: 1px solid var(--line-2); }
-.brand .dot { background: linear-gradient(135deg, #5b9dff, #2563eb); box-shadow: 0 2px 8px rgba(37,99,235,.45); }
+.brand .dot { background: var(--grad-brand); box-shadow: 0 3px 9px color-mix(in srgb, var(--accent) 45%, transparent); }
 .sidebar { border-right: none; box-shadow: inset -1px 0 0 var(--line); }
 
 /* buttons with a touch of depth */
@@ -279,7 +290,8 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .conn-count { background: var(--accent); color: #fff; border-radius: 20px; font-size: 11px; padding: 0 6px; margin-left: 2px; }
 .sidebar-collapsed .sidebar { display: none; }
 .brand { display: flex; align-items: center; gap: 9px; padding: 16px 18px; font-size: 15px; font-weight: 700; letter-spacing: -.01em; position: sticky; top: 0; background: var(--panel); z-index: 2; }
-.brand .dot { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(135deg, #3b82f6, #2563eb); box-shadow: 0 2px 6px rgba(37,99,235,.4); }
+.brand .dot { width: 22px; height: 22px; border-radius: 7px; background: var(--grad-brand); box-shadow: 0 3px 9px color-mix(in srgb, var(--accent) 45%, transparent); }
+.brand { font-weight: 750; }
 .sb-section { padding: 6px 14px 14px; border-top: 1px solid var(--line-2); }
 .sb-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); user-select: none; }
 .sb-head .caret { transition: transform .15s; color: var(--faint); }
@@ -491,7 +503,13 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .focus-next { background: rgba(255,255,255,.22); border: none; color: #fff; border-radius: 9px; padding: 7px 14px; font-size: 13px; font-weight: 600; }
 .focus-next:hover { background: rgba(255,255,255,.3); }
 .focus-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
-.focus-show { position: fixed; right: 24px; bottom: 24px; z-index: 1000; background: var(--accent); color: #fff; border: none; border-radius: 22px; padding: 11px 18px; font-size: 13px; font-weight: 600; box-shadow: var(--shadow-lg); }
+.focus-show { position: fixed; right: 22px; bottom: 22px; z-index: 1000; display: flex; align-items: center; gap: 9px; max-width: 250px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-left: 4px solid var(--fc, var(--accent)); border-radius: 14px; padding: 9px 14px 9px 12px; font-size: 13px; font-weight: 650; box-shadow: var(--shadow-lg); transition: transform .12s ease, box-shadow .12s; }
+.focus-show:hover { transform: translateY(-2px); }
+.focus-show-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fc, var(--accent)) 24%, transparent); }
+.focus-show-txt { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-show svg { color: var(--fc, var(--accent)); flex: none; }
+.sbx-label.mini { padding: 8px 6px 4px; font-size: 10.5px; }
+.sbx-label.mini .sbx-label-ic { width: 17px; height: 17px; }
 
 /* Desktop always-on-top window: the focus card fills the frameless OS window.
    The header is the native title-bar drag region; buttons/links opt back out
