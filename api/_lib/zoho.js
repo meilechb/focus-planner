@@ -155,7 +155,10 @@ async function listCrmRecords(apiDomain, accessToken, module, titleOf, subOf, cl
       sub: subOf(r),
       note: nextStep ? `Next: ${nextStep}` : null,
       open: !closedRe.test(r[statusField] || ''),
-      url: `${crmWebBase()}/crm/EntityInfo?module=${module}&id=${r.id}`,
+      // Deep-link to the record in the CRM web app. The current CRM UI uses
+      // /crm/tab/<Module>/<id>; the older EntityInfo?module=&id= form no longer
+      // resolves and lands on a blank page.
+      url: `${crmWebBase()}/crm/tab/${module}/${r.id}`,
       fields,
     }
   })
