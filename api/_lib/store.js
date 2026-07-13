@@ -1,16 +1,30 @@
 // Storage + auth + secret-at-rest for Focus Planner.
 //
-// The entire app is a single JSON document stored under one key in Upstash
-// Redis (a serverless-native key/value store with a generous free tier). Read
-// = one GET, write = one SET — no per-write operation churn. Refresh tokens
-// inside the doc are encrypted at rest with AES-256-GCM, so the stored value
-// yields no usable secrets on its own. Single user, so last-write-wins.
+// The entire app is a single JSON document. It lives under one key in Upstash
+// Redis (serverless-native KV, generous free tier) when Redis is configured —
+// read = one GET, write = one SET, no per-write operation churn. If Redis is
+// NOT configured, it transparently falls back to the legacy Vercel Blob store
+// so the app keeps working during the switch-over. The first time a
+// Redis-backed read finds nothing, it copies the existing Blob document over
+// (a one-time migration), so no data — including connected accounts — is lost.
+// Refresh tokens inside the doc are encrypted at rest with AES-256-GCM. Single
+// user, so last-write-wins.
 
 import crypto from 'node:crypto'
 import { Redis } from '@upstash/redis'
+import { list, put, del } from '@vercel/blob'
 
 // The whole app document lives under this one Redis key.
 const DOC_KEY = 'focus:data'
+// Legacy Vercel Blob prefix (fallback backend + one-time migration source).
+const BLOB_PREFIX = 'focus/data'
+
+function redisConfigured() {
+  return !!(
+    (process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL) &&
+    (process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN)
+  )
+}
 
 // Lazily build the Redis client from env. Supports both the Upstash-native
 // variable names and Vercel's KV integration names, so whichever way the store
@@ -20,9 +34,6 @@ function redis() {
   if (_redis) return _redis
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL
   const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN
-  if (!url || !token) {
-    throw new Error('Redis is not configured: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (or the KV_REST_API_* equivalents) in your Vercel project.')
-  }
   _redis = new Redis({ url, token })
   return _redis
 }
@@ -80,16 +91,71 @@ export function decryptSecret(value) {
 }
 
 // ---------------------------------------------------------------------------
-// Redis read / write (single JSON doc, last-write-wins)
+// Read / write (single JSON doc, last-write-wins). Redis when configured,
+// legacy Vercel Blob otherwise, with a one-time Blob→Redis migration.
 // ---------------------------------------------------------------------------
 
-async function readDoc() {
-  // @upstash/redis auto-serializes JSON: set(obj) stores JSON, get() returns
-  // the parsed object (or null when the key doesn't exist yet).
-  const doc = await redis().get(DOC_KEY)
-  if (!doc || typeof doc !== 'object') return { doc: emptyDoc(), empty: true }
+function normalizeDoc(doc) {
+  if (!doc || typeof doc !== 'object') return null
   if (!doc.state) doc.state = { ...DEFAULT_STATE }
   if (!Array.isArray(doc.connections)) doc.connections = []
+  return doc
+}
+
+// Newest Blob version (immutable URL, always fresh). Returns null if there are
+// no versions yet; throws on an actual fetch/parse failure so a write never
+// runs against wrongly-empty data.
+async function blobReadNewest() {
+  const r = await list({ prefix: BLOB_PREFIX })
+  const blobs = (r.blobs || []).sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt))
+  if (!blobs.length) return null
+  const res = await fetch(blobs[0].url)
+  if (!res.ok) throw new Error(`blob read failed: ${res.status}`)
+  const doc = normalizeDoc(JSON.parse(await res.text()))
+  if (!doc) throw new Error('blob parse failed')
+  return doc
+}
+
+async function blobWrite(doc) {
+  const written = await put(`${BLOB_PREFIX}.json`, JSON.stringify(doc), {
+    access: 'public',
+    addRandomSuffix: true,
+    contentType: 'application/json',
+  })
+  // Delete only versions older than the one we just wrote (never a concurrent
+  // writer's newer version).
+  try {
+    const r = await list({ prefix: BLOB_PREFIX })
+    const blobs = (r.blobs || []).sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt))
+    const idx = blobs.findIndex((b) => b.url === written.url)
+    if (idx !== -1) {
+      const stale = blobs.slice(idx + 1).map((b) => b.url)
+      if (stale.length) await del(stale)
+    }
+  } catch {}
+}
+
+async function readDoc() {
+  if (redisConfigured()) {
+    // @upstash/redis auto-serializes JSON: get() returns the parsed object (or
+    // null when the key doesn't exist yet).
+    const doc = normalizeDoc(await redis().get(DOC_KEY))
+    if (doc) return { doc }
+    // Redis is empty — one-time migration: pull the existing Blob document (if
+    // any) and seed Redis with it, so blocks, settings AND connected accounts
+    // carry over without anyone having to reconnect.
+    try {
+      const legacy = await blobReadNewest()
+      if (legacy) {
+        try { await redis().set(DOC_KEY, legacy) } catch {}
+        return { doc: legacy }
+      }
+    } catch {}
+    return { doc: emptyDoc(), empty: true }
+  }
+  // Redis not configured yet — keep working off the legacy Blob store.
+  const doc = await blobReadNewest()
+  if (!doc) return { doc: emptyDoc(), empty: true }
   return { doc }
 }
 
@@ -104,7 +170,8 @@ export async function loadDoc() {
 async function mutateDoc(mutator) {
   const { doc } = await readDoc()
   const result = mutator(doc)
-  await redis().set(DOC_KEY, doc)
+  if (redisConfigured()) await redis().set(DOC_KEY, doc)
+  else await blobWrite(doc)
   return result
 }
 
