@@ -1,9 +1,8 @@
 name: Build desktop apps
 
-# Builds installable Mac / Windows / Linux apps from desktop/.
-# Runs automatically on every push to the working branch (so the finished
-# installers show up on the "desktop-latest" release), and also on a
-# `desktop-v*` tag or a manual "Run workflow".
+# Builds the Windows installer from desktop/. Runs on every push to the working
+# branch (publishing to the "desktop-latest" release), a desktop-v* tag, or a
+# manual "Run workflow".
 
 on:
   push:
@@ -18,17 +17,7 @@ on:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            platform: mac
-          - os: windows-latest
-            platform: win
-          - os: ubuntu-latest
-            platform: linux
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     defaults:
       run:
         working-directory: desktop
@@ -42,28 +31,18 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build ${{ matrix.platform }} app
-        run: npm run dist:${{ matrix.platform }}
+      - name: Build Windows app
+        run: npm run dist
         env:
-          # Skip code-signing (no certificates in CI). Users may see an
-          # "unidentified developer" prompt on first launch — normal for
-          # unsigned builds.
-          CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload installers
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: focus-planner-${{ matrix.platform }}
-          path: |
-            desktop/dist/*.dmg
-            desktop/dist/*.zip
-            desktop/dist/*.exe
-            desktop/dist/*.AppImage
+          name: focus-planner-win
+          path: desktop/dist/*.exe
           if-no-files-found: ignore
 
-  # Branch pushes publish a rolling "desktop-latest" release with direct
-  # download links; a desktop-v* tag publishes a versioned release instead.
   release:
     needs: build
     if: github.event_name != 'workflow_dispatch'
@@ -75,13 +54,6 @@ jobs:
         with:
           path: artifacts
 
-      - name: Publish tagged release
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*
-          fail_on_unmatched_files: false
-
       - name: Publish latest release
         if: startsWith(github.ref, 'refs/heads/')
         uses: softprops/action-gh-release@v2
@@ -89,13 +61,14 @@ jobs:
           tag_name: desktop-latest
           name: Focus Planner Desktop (latest)
           body: |
-            Latest desktop builds. Download the file for your computer:
-            - **Mac (Apple Silicon):** the `-mac-arm64.dmg` (use `-x64` on an Intel Mac)
-            - **Windows:** the `-win-x64.exe`
-            - **Linux:** the `-linux-x64.AppImage`
+            Windows desktop build. Download **Focus Planner-<version>-win-x64.exe**
+            and run it. If SmartScreen warns, click **More info → Run anyway**.
+          files: artifacts/**/*.exe
+          fail_on_unmatched_files: false
 
-            First launch shows an "unidentified developer / unknown publisher"
-            warning because the app isn't code-signed yet — that's expected.
-            Mac: right-click the app → Open → Open. Windows: More info → Run anyway.
-          files: artifacts/**/*
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.exe
           fail_on_unmatched_files: false

@@ -511,21 +511,18 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .sbx-label.mini { padding: 8px 6px 4px; font-size: 10.5px; }
 .sbx-label.mini .sbx-label-ic { width: 17px; height: 17px; }
 
-/* Desktop always-on-top window: the focus card fills the frameless OS window.
-   The header is the native title-bar drag region; buttons/links opt back out
-   so they stay clickable. `-webkit-app-region` is honored by Electron. */
+/* Desktop always-on-top card: fills the frameless OS window. Dragging and
+   resizing are driven by pointer events in JS (see FocusCard windowMode) and
+   applied to the OS window over IPC — NOT via -webkit-app-region, which blocks
+   clicks and makes the card fiddly. */
 .focus-window-body { background: transparent; overflow: hidden; }
-.focus-card--window { position: fixed; inset: 0; width: 100%; height: 100%; border-radius: 14px; }
-.focus-card--window .focus-head { -webkit-app-region: drag; cursor: default; }
-.focus-card--window .focus-head .focus-x,
-.focus-card--window .focus-join,
-.focus-card--window .focus-details,
-.focus-card--window .focus-task,
-.focus-card--window .focus-task-toggle,
-.focus-card--window .focus-task-link,
-.focus-card--window .focus-complete,
-.focus-card--window .focus-open,
-.focus-card--window .focus-next { -webkit-app-region: no-drag; }
+.focus-card--window { position: fixed; inset: 0; width: 100%; height: 100%; border-radius: 16px; cursor: grab; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+.focus-card--window:active { cursor: grabbing; }
+.focus-card--window button, .focus-card--window a { cursor: pointer; }
+.focus-card--window .focus-resize.win { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; z-index: 5;
+  background:
+    linear-gradient(135deg, transparent 55%, rgba(255,255,255,.55) 55%, rgba(255,255,255,.55) 62%, transparent 62%,
+      transparent 74%, rgba(255,255,255,.55) 74%, rgba(255,255,255,.55) 81%, transparent 81%); }
 
 /* ============================================================
    Modals
