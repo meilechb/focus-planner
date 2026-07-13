@@ -11,25 +11,35 @@ import { Icon } from './Icon.jsx'
 
 const DEFAULT_TZ = 'America/New_York'
 const ZOOM_KEY = 'focus_zoom'
-const VIEW_START = 8 * 60 // default: scroll so the day starts at 8 AM
-const VIEW_HOURS = 10 // default density: fit ~8 AM–6 PM in view
-// Default density: pick px-per-minute so ~10 hours fill the visible calendar.
-function defaultZoom() {
-  const h = (typeof window !== 'undefined' ? window.innerHeight : 900) - 150
-  return Math.min(3, Math.max(1, h / (VIEW_HOURS * 60)))
+const ZOOM_MANUAL_KEY = 'focus_zoom_manual'
+const VIEW_START = 8 * 60 // default: frame the day starting at 8 AM
+const VIEW_END = 18 * 60 // …through 6 PM
+const VIEW_HOURS = (VIEW_END - VIEW_START) / 60 // 10 hours (8 AM–6 PM)
+const MIN_ZOOM = 0.32 // allow shrinking well past "1 px/min" so it always fits
+const MAX_ZOOM = 3
+// Fit density: px-per-minute so 8 AM–6 PM exactly fills `availPx` of height.
+function fitZoomFor(availPx) {
+  const h = (availPx || (typeof window !== 'undefined' ? window.innerHeight - 150 : 600)) - 12
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, h / (VIEW_HOURS * 60)))
 }
+function defaultZoom() { return fitZoomFor() }
 const CACHE_KEY = 'focus_cache'
 function readCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}') } catch { return {} } }
 const SEEN_KEY = 'focus_seen_accounts'
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
 function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
 const NAVCFG_KEY = 'focus_navcfg'
-const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, zohoAssignee: 'mine', filters: { deals: [], leads: [], projects: [] }, colors: {}, buffers: { before: 15, after: 0 } }
+const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, zohoAssignee: 'mine', filters: { deals: [], leads: [], projects: [] }, colors: {}, names: {}, buffers: { before: 15, after: 0 } }
 // One source of truth for connector colors. A block dropped from a source, the
 // sidebar section, and the focus card ALL use this — so a Google task is the
 // same color everywhere. Users can override per source in Settings.
 const DEFAULT_COLORS = { google: '#2563eb', 'zoho-crm': '#e42527', 'zoho-projects': '#e8590c' }
-const COLOR_CHOICES = ['#6d5efc', '#ff6b9d', '#14c8a6', '#ffa63d', '#ff5a5f', '#00b8d9', '#7c4dff', '#8892a6']
+const COLOR_CHOICES = [
+  '#6d5efc', '#7c4dff', '#a855f7', '#c04bff', '#ec4899', '#ff6b9d',
+  '#ff5a5f', '#f4511e', '#ffa63d', '#f6c445', '#eab308', '#84cc16',
+  '#36b37e', '#14c8a6', '#06b6d4', '#00b8d9', '#3b82f6', '#6366f1',
+  '#64748b', '#8892a6',
+]
 function srcKey(gid) { return gid === 'zoho-crm' ? 'zoho-crm' : gid === 'zoho-projects' ? 'zoho-projects' : 'google' }
 function srcColor(navCfg, gid) { const k = srcKey(gid); return (navCfg?.colors && navCfg.colors[k]) || DEFAULT_COLORS[k] }
 function readNavCfg() {
@@ -42,6 +52,7 @@ function readNavCfg() {
       modules: { ...DEFAULT_NAVCFG.modules, ...(p.modules || {}) },
       filters: { ...DEFAULT_NAVCFG.filters, ...(p.filters || {}) },
       colors: { ...DEFAULT_NAVCFG.colors, ...(p.colors || {}) },
+      names: { ...DEFAULT_NAVCFG.names, ...(p.names || {}) },
       buffers: { ...DEFAULT_NAVCFG.buffers, ...(p.buffers || {}) },
     }
   } catch { return { ...DEFAULT_NAVCFG } }
@@ -80,7 +91,26 @@ export default function Planner() {
 
   const [viewDate, setViewDate] = useState(() => isoDate(new Date(), readCache().tz || DEFAULT_TZ))
   const [view, setView] = useState(() => readCache().view || 'day') // day | week | month
-  const [zoom, setZoom] = useState(() => { const s = Number(localStorage.getItem(ZOOM_KEY)); return s ? Math.min(3, Math.max(1, s)) : defaultZoom() })
+  // Density (px per minute). Auto-fits 8 AM–6 PM to the screen unless the user
+  // has manually set the slider; re-fits on window resize.
+  const [zoomManual, setZoomManual] = useState(() => localStorage.getItem(ZOOM_MANUAL_KEY) === '1')
+  const [zoom, setZoom] = useState(() => {
+    const s = Number(localStorage.getItem(ZOOM_KEY))
+    return (localStorage.getItem(ZOOM_MANUAL_KEY) === '1' && s) ? clamp(s, MIN_ZOOM, MAX_ZOOM) : defaultZoom()
+  })
+  const calAreaRef = useRef(null)
+  const fitZoom = () => fitZoomFor(calAreaRef.current?.clientHeight)
+  function setDensity(v) { setZoomManual(true); try { localStorage.setItem(ZOOM_MANUAL_KEY, '1') } catch {}; setZoom(clamp(v, MIN_ZOOM, MAX_ZOOM)) }
+  function autoDensity() { setZoomManual(false); try { localStorage.setItem(ZOOM_MANUAL_KEY, '0') } catch {}; setZoom(fitZoom()) }
+  // Keep the day/week grid fitted to the viewport (unless manually overridden).
+  useEffect(() => {
+    if (zoomManual) return
+    const apply = () => setZoom(fitZoom())
+    apply()
+    window.addEventListener('resize', apply)
+    return () => window.removeEventListener('resize', apply)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomManual, view])
   const [now, setNow] = useState(() => nowMinutes(readCache().tz || DEFAULT_TZ))
   const [theme, setTheme] = useState(() => localStorage.getItem('focus_theme') || 'system')
   useEffect(() => {
@@ -546,19 +576,19 @@ export default function Planner() {
         connections={connections} onOpenSettings={openSettings}
         remState={remState} onEnableReminders={enableReminders}
         tz={tz} today={today}
-        navCfg={navCfg}
+        navCfg={navCfg} onNavChange={updateNavCfg}
         calAccounts={calAccounts} selectedCalendars={selectedCalendars} toggleCalendar={toggleCalendar}
       />
 
       <main className="main">
         <TopBar
           view={view} setView={setView} viewDate={viewDate} setViewDate={setViewDate} today={today}
-          zoom={zoom} setZoom={setZoom} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          zoom={zoom} setZoom={setDensity} onAutoDensity={autoDensity} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)}
           planned={(dayBlocks(viewDate)).reduce((n, b) => n + (b.end - b.start), 0)}
         />
         {!storageOk && <div className="banner warn"><span className="banner-dot" />Reconnecting to storage — your changes are saved locally and will sync automatically.</div>}
 
-        <div className="main-card">
+        <div className="main-card" ref={calAreaRef}>
         {view === 'day' && (
           <DayGrid
             day={viewDate} today={today} now={now} zoom={zoom} bufferCfg={navCfg.buffers}
@@ -676,7 +706,7 @@ export default function Planner() {
 
 /* ========================================================================== */
 
-function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, sidebarOpen, onToggleSidebar, planned }) {
+function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, onAutoDensity, sidebarOpen, onToggleSidebar, planned }) {
   const plannedLabel = planned ? (planned >= 60 ? `${Math.floor(planned / 60)}h${planned % 60 ? ' ' + (planned % 60) + 'm' : ''}` : `${planned}m`) : ''
   const step = view === 'week' ? 7 : view === 'month' ? 30 : 1
   const d = new Date(viewDate + 'T12:00:00')
@@ -697,8 +727,8 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, si
       <div className="spacer" />
       {view !== 'month' && (
         <div className="density">
-          <span className="lbl">Density</span>
-          <input type="range" min="1" max="3" step="0.05" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} />
+          <button className="lbl density-fit" title="Fit 8 AM–6 PM to the screen" onClick={onAutoDensity}>Fit</button>
+          <input type="range" min="0.32" max="3" step="0.02" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} title="Density — drag to zoom the hours" />
         </div>
       )}
       <div className="seg">
@@ -904,7 +934,7 @@ function Sidebar(props) {
   const {
     projects, onNewProject, onEditProject, onDeleteProject, favorites, isFav, toggleFav, connected, hasZoho, groups,
     taskFilter, setTaskFilter, taskSearch, setTaskSearch, collapsed, setCollapsed,
-    connections, onOpenSettings, remState, onEnableReminders, tz, today, navCfg,
+    connections, onOpenSettings, remState, onEnableReminders, tz, today, navCfg, onNavChange,
     calAccounts, selectedCalendars, toggleCalendar,
   } = props
   const [secOpen, setSecOpen] = useState({})
@@ -983,9 +1013,20 @@ function Sidebar(props) {
   // Meta (color / icon / settings tab / title) for a connected-source section.
   const groupMeta = (g) => {
     const color = srcColor(navCfg, g.id)
-    if (g.id === 'zoho-crm') return { color, icon: 'list', title: 'Zoho CRM', tab: 'crm' }
-    if (g.id === 'zoho-projects') return { color, icon: 'folder', title: 'Zoho Projects', tab: 'projects' }
-    return { color, icon: 'check', title: 'Google Tasks', tab: 'gtasks' }
+    const custom = navCfg.names?.[g.id]
+    if (g.id === 'zoho-crm') return { color, icon: 'list', title: custom || 'Zoho CRM', tab: 'crm' }
+    if (g.id === 'zoho-projects') return { color, icon: 'folder', title: custom || 'Zoho Projects', tab: 'projects' }
+    // Two Google accounts would otherwise both read "Google Tasks" — fall back
+    // to the account email to disambiguate, and let the user rename either.
+    return { color, icon: 'check', title: custom || (g.account && g.account !== 'Google' ? g.account : 'Google Tasks'), tab: 'gtasks' }
+  }
+  // Rename any sidebar section (stored per section id in navCfg.names).
+  function renameSection(gid, name) {
+    const names = { ...(navCfg.names || {}) }
+    const t = (name || '').trim()
+    if (t) names[gid] = t
+    else delete names[gid]
+    onNavChange({ ...navCfg, names })
   }
   // Drag an ENTIRE connector (e.g. all of Zoho CRM) onto the grid as one block.
   const dragBatchAll = (e, g) => {
@@ -1031,7 +1072,6 @@ function Sidebar(props) {
 
       {favorites.length > 0 && (
         <div className="sb-pinned">
-          <div className="sbx-label mini"><span className="sbx-label-ic" style={{ '--c': '#f5b301' }}><Icon name="star" size={11} filled /></span> Favorites <span className="sbx-count">{favorites.length}</span></div>
           <div className="fav-grid">
             {favorites.filter((f) => !taskSearch || (f.label || '').toLowerCase().includes(taskSearch.toLowerCase())).map((f) => (
               <div key={f.id} className="fav-card" style={{ background: f.color }} draggable onDragStart={(e) => dragFav(e, f)}
@@ -1057,8 +1097,8 @@ function Sidebar(props) {
           <button className="sbx-label-add" title="Add a connector" onClick={() => onOpenSettings('connections')}><Icon name="plus" size={14} /></button>
         </div>
 
-        <SbSection color="#7c3aed" icon="folder" title="Custom" count={projects.length || null}
-          open={isOpen('custom')} onToggle={() => tog('custom')}>
+        <SbSection color={navCfg.colors?.custom || '#7c3aed'} icon="folder" title={navCfg.names?.custom || 'Custom'} count={projects.length || null}
+          open={isOpen('custom')} onToggle={() => tog('custom')} onRename={(n) => renameSection('custom', n)}>
           <div className="proj-list">
             {projects.map((p) => (
               <div key={p.id} className="proj-row" draggable onDragStart={(e) => dragProject(e, p)}>
@@ -1078,7 +1118,7 @@ function Sidebar(props) {
           const cnt = g.lists.reduce((n, l) => n + listTasks(g, l).length, 0)
           return (
             <SbSection key={g.id} color={m.color} icon={m.icon} title={m.title} count={cnt}
-              open={isOpen(g.id)} onToggle={() => tog(g.id)} onSettings={() => onOpenSettings(m.tab)} onDragStart={(e) => dragBatchAll(e, g)}>
+              open={isOpen(g.id)} onToggle={() => tog(g.id)} onSettings={() => onOpenSettings(m.tab)} onRename={(n) => renameSection(g.id, n)} onDragStart={(e) => dragBatchAll(e, g)}>
               {renderGroup(g)}
             </SbSection>
           )
@@ -1100,15 +1140,27 @@ function Sidebar(props) {
 
 // A collapsible sidebar section: colored icon chip, title, count, hover gear.
 // Source sections are draggable (onDragStart) so the whole connector drops as one block.
-function SbSection({ color, icon, title, count, open, onToggle, onSettings, onDragStart, children }) {
+// Double-click the title (or the rename button) to rename it via onRename.
+function SbSection({ color, icon, title, count, open, onToggle, onSettings, onRename, onDragStart, children }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(title)
+  const startEdit = (e) => { if (!onRename) return; e.stopPropagation(); setDraft(title); setEditing(true) }
+  const commit = () => { setEditing(false); if (draft.trim() && draft.trim() !== title) onRename(draft.trim()) }
   return (
     <div className={'sbx' + (open ? ' open' : '')}>
-      <div className="sbx-head" onClick={onToggle} draggable={!!onDragStart} onDragStart={onDragStart} title={onDragStart ? 'Drag onto the calendar to block this whole source' : undefined}>
+      <div className="sbx-head" onClick={editing ? undefined : onToggle} draggable={!!onDragStart && !editing} onDragStart={onDragStart} title={onDragStart ? 'Drag onto the calendar to block this whole source' : undefined}>
         <span className="sbx-ic" style={{ '--c': color }}><Icon name={icon} size={14} /></span>
-        <span className="sbx-title">{title}</span>
-        {count != null && <span className="sbx-count">{count}</span>}
-        {onSettings && <button className="sbx-gear" title="Settings" onClick={(e) => { e.stopPropagation(); onSettings() }}><Icon name="settings" size={14} /></button>}
-        <span className="sbx-caret"><Icon name={open ? 'chevronDown' : 'chevronRight'} size={15} /></span>
+        {editing ? (
+          <input className="sbx-rename" autoFocus value={draft} onClick={(e) => e.stopPropagation()}
+            onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+            onKeyDown={(e) => { if (e.key === 'Enter') commit(); else if (e.key === 'Escape') setEditing(false) }} />
+        ) : (
+          <span className="sbx-title" onDoubleClick={startEdit} title={onRename ? 'Double-click to rename' : undefined}>{title}</span>
+        )}
+        {count != null && !editing && <span className="sbx-count">{count}</span>}
+        {onRename && !editing && <button className="sbx-gear sbx-rename-btn" title="Rename" onClick={startEdit}><Icon name="edit" size={13} /></button>}
+        {onSettings && !editing && <button className="sbx-gear" title="Settings" onClick={(e) => { e.stopPropagation(); onSettings() }}><Icon name="settings" size={14} /></button>}
+        {!editing && <span className="sbx-caret"><Icon name={open ? 'chevronDown' : 'chevronRight'} size={15} /></span>}
       </div>
       {open && <div className="sbx-body">{children}</div>}
     </div>

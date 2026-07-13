@@ -727,3 +727,40 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .focus-complete .check { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,.9); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; }
 .focus-complete.done .check { background: #fff; color: var(--ink); }
 .focus-complete.done { opacity: .85; }
+
+/* ============================================================
+   Theme character pass — tint + day-view polish
+   ============================================================ */
+/* Soft brand wash so the sidebar and calendar aren't flat white. */
+.sidebar { background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, var(--panel)) 0%, var(--panel) 210px); }
+.brand { background: transparent; }
+.main-card { background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 4%, var(--panel)) 0%, var(--panel) 130px); }
+.cal-scroll { background: transparent; }
+.week, .week-colhead, .week-col.is-today, .month, .month-grid { background: transparent; }
+
+/* Favorites: no heading now — give the cards a little breathing room + pop. */
+.sb-pinned { padding-top: 8px; }
+.fav-card { border-radius: 13px; box-shadow: 0 3px 10px color-mix(in srgb, var(--ink) 14%, transparent); }
+.fav-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px color-mix(in srgb, var(--ink) 20%, transparent); }
+
+/* "Fit to screen" density button. */
+.density-fit { border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .02em; padding: 3px 10px; border-radius: 999px; margin-right: 2px; }
+.density-fit:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--accent-weak); }
+
+/* Day/week grid: softer hour lines, a crisper "now" marker. */
+.hour-row { border-top-color: color-mix(in srgb, var(--ink) 8%, transparent); }
+.hour-row.half { border-top-color: color-mix(in srgb, var(--ink) 6%, transparent); }
+.now-line { background: var(--accent2); box-shadow: 0 0 8px color-mix(in srgb, var(--accent2) 55%, transparent); }
+.now-dot { background: var(--accent2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent2) 22%, transparent); }
+.now-chip { background: var(--accent2); }
+.week-col.is-today { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.wch.is-today .num { background: var(--accent); }
+.mcell.is-today .mcell-num { background: var(--accent); }
+/* Event blocks: a touch more rounding for a friendlier feel. */
+.ev-block, .ev-meeting { border-radius: 9px; }
+
+/* Inline section rename. */
+.sbx-rename { flex: 1; min-width: 0; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--ink); background: var(--input-bg); border: 1px solid var(--accent); border-radius: 7px; padding: 3px 7px; outline: none; box-shadow: 0 0 0 3px var(--accent-weak); }
+.sbx-rename-btn { opacity: 0; }
+.sbx-head:hover .sbx-rename-btn { opacity: .7; }
+.sbx-rename-btn:hover { opacity: 1 !important; }
