@@ -5,6 +5,7 @@
   "description": "Focus Planner — a native desktop window for your daily time-blocking planner.",
   "author": "Focus Planner",
   "license": "MIT",
+  "repository": "https://github.com/meilechb/focus-planner",
   "main": "main.js",
   "private": true,
   "scripts": {
@@ -22,6 +23,7 @@
     "appId": "app.focusplanner.desktop",
     "productName": "Focus Planner",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "publish": null,
     "directories": {
       "output": "dist",
       "buildResources": "build"
