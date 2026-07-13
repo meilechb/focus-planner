@@ -29,12 +29,18 @@ const isAppUrl = (u) => { try { return APP_ORIGIN && new URL(u).origin === APP_O
 const isAuthUrl = (u) => { try { return AUTH_HOSTS.includes(new URL(u).hostname) } catch { return false } }
 
 const CARD = { minW: 220, minH: 120, maxW: 520, maxH: 360, defW: 300, defH: 210 }
+// When the card is "closed" it shrinks to a small pill in the bottom-right
+// corner (never fully hidden) so it can always be clicked to reopen.
+const PILL = { w: 252, h: 56 }
 const boundsFile = () => path.join(app.getPath('userData'), 'focus-card-bounds.json')
 const loadBounds = () => { try { return JSON.parse(fs.readFileSync(boundsFile(), 'utf8')) } catch { return null } }
 const saveBounds = (b) => { try { fs.writeFileSync(boundsFile(), JSON.stringify(b)) } catch {} }
 
 let mainWindow = null
 let cardWindow = null
+// Remembers the expanded card bounds while it's collapsed to a pill, so
+// reopening restores the exact previous size/position.
+let cardFullBounds = null
 
 function offlineHtml(target) {
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(`<html><head><meta charset="utf-8"><style>
@@ -158,6 +164,35 @@ ipcMain.on('card:resize', (_e, { width, height }) => {
   saveBounds({ x, y, width: w, height: h })
 })
 ipcMain.on('card:hide', () => { if (cardWindow && !cardWindow.isDestroyed()) cardWindow.hide() })
+// Collapse the card to a small always-on-top pill pinned to the bottom-right
+// corner. We remember the expanded bounds (in memory) so reopening restores
+// them; we deliberately do NOT saveBounds() the pill, so a relaunch still opens
+// the full card at its last real size.
+ipcMain.on('card:minimize', () => {
+  if (!cardWindow || cardWindow.isDestroyed()) return
+  cardFullBounds = cardWindow.getBounds()
+  const work = screen.getPrimaryDisplay().workArea
+  const x = work.x + work.width - PILL.w - 24
+  const y = work.y + work.height - PILL.h - 24
+  cardWindow.setBounds({ x, y, width: PILL.w, height: PILL.h })
+  cardWindow.setAlwaysOnTop(true, 'screen-saver')
+  cardWindow.showInactive()
+})
+// Expand the pill back to the full card and bring it to the front.
+ipcMain.on('card:restore', () => {
+  if (!cardWindow || cardWindow.isDestroyed()) return
+  const work = screen.getPrimaryDisplay().workArea
+  const saved = cardFullBounds || loadBounds()
+  const w = saved?.width || CARD.defW
+  const h = saved?.height || CARD.defH
+  const x = saved?.x ?? work.x + work.width - w - 24
+  const y = saved?.y ?? work.y + work.height - h - 24
+  cardWindow.setBounds({ x, y, width: w, height: h })
+  saveBounds({ x, y, width: w, height: h })
+  cardWindow.setAlwaysOnTop(true, 'screen-saver')
+  cardWindow.show()
+  cardWindow.focus()
+})
 ipcMain.on('app:focusMain', () => {
   if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus() }
 })

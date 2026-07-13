@@ -56,6 +56,7 @@ export const STATE_KEYS = new Set([
   'selectedCalendars',
   'selectedTaskLists',
   'selectedZoho',
+  'navcfg', // sidebar config: filters, section names/icons/colors, project visibility, buffers
 ])
 
 // ---------------------------------------------------------------------------
@@ -148,7 +149,7 @@ export async function getPublicState() {
 // the UI expects an object/array, which would then crash reads).
 function validStateValue(key, value) {
   if (key === 'timezone') return typeof value === 'string'
-  if (key === 'blocks') return value != null && typeof value === 'object' && !Array.isArray(value)
+  if (key === 'blocks' || key === 'navcfg') return value != null && typeof value === 'object' && !Array.isArray(value)
   return Array.isArray(value) // projects, favorites, selected*
 }
 

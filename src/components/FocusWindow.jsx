@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { computeFocus, buffersFrom, nowMinutes, localDateISO } from '../lib/lib.js'
 import FocusCard from './FocusCard.jsx'
+import { Icon } from './Icon.jsx'
 
 // Standalone focus card for the desktop app's always-on-top floating window.
 // It renders the very same card the web app shows, but as its own OS-level
@@ -22,6 +23,10 @@ export default function FocusWindow() {
   const [, force] = useState(0)
   const rerender = () => force((n) => n + 1)
   const [overrideBlockId, setOverrideBlockId] = useState(null)
+  // When "closed", the card collapses to a pill in the corner instead of
+  // vanishing, so it can always be reopened (there's no other UI to bring it
+  // back in the desktop app).
+  const [minimized, setMinimized] = useState(false)
 
   useEffect(() => {
     const id = setInterval(rerender, 15000) // keep the clock + focus fresh
@@ -96,8 +101,30 @@ export default function FocusWindow() {
   }
 
   function hide() {
-    if (window.focusDesktop?.hideFocusCard) window.focusDesktop.hideFocusCard()
+    // Collapse to a corner pill (via the desktop shell) rather than disappear.
+    if (window.focusDesktop?.minimizeCard) { window.focusDesktop.minimizeCard(); setMinimized(true) }
+    else if (window.focusDesktop?.hideFocusCard) window.focusDesktop.hideFocusCard()
     else window.close()
+  }
+
+  function restore() {
+    if (window.focusDesktop?.restoreCard) window.focusDesktop.restoreCard()
+    setMinimized(false)
+  }
+
+  if (minimized) {
+    return (
+      <button
+        className="focus-show focus-show--win"
+        onClick={restore}
+        style={{ '--fc': focus.color }}
+        title={`${focus.label} — click to reopen`}
+      >
+        <span className="focus-show-dot" style={{ background: focus.color }} />
+        <span className="focus-show-txt">{focus.label}</span>
+        <Icon name="focus" size={14} />
+      </button>
+    )
   }
 
   return (

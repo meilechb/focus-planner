@@ -525,6 +525,10 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .focus-card--window { position: fixed; inset: 7px; width: auto; height: auto; border-radius: 16px; cursor: grab; box-shadow: 0 6px 20px rgba(0,0,0,.28); }
 .focus-card--window:active { cursor: grabbing; }
 .focus-card--window button, .focus-card--window a { cursor: pointer; }
+/* Collapsed pill: fills the small always-on-top window (instead of the web
+   app's fixed bottom-right anchor), so clicking anywhere reopens the card. */
+.focus-show--win { position: fixed; inset: 6px; right: 6px; bottom: 6px; max-width: none; width: auto;
+  justify-content: flex-start; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.28); }
 .focus-card--window .focus-resize.win { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; z-index: 5;
   background:
     linear-gradient(135deg, transparent 55%, rgba(255,255,255,.55) 55%, rgba(255,255,255,.55) 62%, transparent 62%,

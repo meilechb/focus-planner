@@ -49,20 +49,23 @@ const COLOR_CHOICES = [
 ]
 function srcKey(gid) { return gid === 'zoho-crm' ? 'zoho-crm' : gid === 'zoho-projects' ? 'zoho-projects' : 'google' }
 function srcColor(navCfg, gid) { const k = srcKey(gid); return (navCfg?.colors && navCfg.colors[k]) || DEFAULT_COLORS[k] }
+// Deep-merge a stored/server config with the defaults so a partial config
+// doesn't drop whole default sections (modules/filters/colors/…).
+function mergeNavCfg(p) {
+  p = p || {}
+  return {
+    ...DEFAULT_NAVCFG, ...p,
+    modules: { ...DEFAULT_NAVCFG.modules, ...(p.modules || {}) },
+    filters: { ...DEFAULT_NAVCFG.filters, ...(p.filters || {}) },
+    colors: { ...DEFAULT_NAVCFG.colors, ...(p.colors || {}) },
+    names: { ...DEFAULT_NAVCFG.names, ...(p.names || {}) },
+    icons: { ...DEFAULT_NAVCFG.icons, ...(p.icons || {}) },
+    buffers: { ...DEFAULT_NAVCFG.buffers, ...(p.buffers || {}) },
+  }
+}
 function readNavCfg() {
   try {
-    const p = JSON.parse(localStorage.getItem(NAVCFG_KEY) || '{}')
-    // Deep-merge the nested objects so a partially-stored config doesn't drop
-    // whole default sections (modules/filters/colors/buffers).
-    return {
-      ...DEFAULT_NAVCFG, ...p,
-      modules: { ...DEFAULT_NAVCFG.modules, ...(p.modules || {}) },
-      filters: { ...DEFAULT_NAVCFG.filters, ...(p.filters || {}) },
-      colors: { ...DEFAULT_NAVCFG.colors, ...(p.colors || {}) },
-      names: { ...DEFAULT_NAVCFG.names, ...(p.names || {}) },
-      icons: { ...DEFAULT_NAVCFG.icons, ...(p.icons || {}) },
-      buffers: { ...DEFAULT_NAVCFG.buffers, ...(p.buffers || {}) },
-    }
+    return mergeNavCfg(JSON.parse(localStorage.getItem(NAVCFG_KEY) || '{}'))
   } catch { return { ...DEFAULT_NAVCFG } }
 }
 const minToTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
@@ -148,7 +151,7 @@ export default function Planner() {
   const [showCmd, setShowCmd] = useState(false)
   const [navCfg, setNavCfg] = useState(readNavCfg)
   const [viewEvent, setViewEvent] = useState(null) // a Google Calendar event to inspect
-  function updateNavCfg(n) { setNavCfg(n); try { localStorage.setItem(NAVCFG_KEY, JSON.stringify(n)) } catch {} }
+  function updateNavCfg(n) { setNavCfg(n); try { localStorage.setItem(NAVCFG_KEY, JSON.stringify(n)) } catch {}; saveKey('navcfg', n) }
 
   const today = isoDate(new Date(), tz)
   const connected = connections.some((c) => c.provider === 'google')
@@ -184,6 +187,18 @@ export default function Planner() {
         setSelectedCalendars(state.selectedCalendars || [])
         setSelectedTaskLists(state.selectedTaskLists || [])
         setStorageOk(true)
+        // Sidebar config (filters, section names/icons/colors, project
+        // visibility, buffers) is stored server-side so it syncs across the web
+        // app and the desktop app. Use the server copy when present; otherwise
+        // push this device's local copy up so it becomes the shared source.
+        if (state.navcfg && typeof state.navcfg === 'object') {
+          const merged = mergeNavCfg(state.navcfg)
+          setNavCfg(merged)
+          try { localStorage.setItem(NAVCFG_KEY, JSON.stringify(merged)) } catch {}
+        } else {
+          const local = readNavCfg()
+          if (JSON.stringify(local) !== JSON.stringify(DEFAULT_NAVCFG)) saveKey('navcfg', local)
+        }
         // Restore-from-backup: this browser keeps a local copy of everything.
         // If it holds blocks/projects/favorites the server is missing (e.g. a
         // failed save, or a storage migration that lost data), merge them in
