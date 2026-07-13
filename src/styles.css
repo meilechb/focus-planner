@@ -767,6 +767,17 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .icon-pop-btn:hover { background: var(--accent-weak); color: var(--accent); }
 .icon-pop-btn.on { background: var(--accent); color: #fff; }
 
+/* Project visibility picker (Zoho Projects settings). */
+.proj-picker { margin-bottom: 14px; }
+.proj-picker-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 7px; }
+.proj-picker-list { display: flex; flex-direction: column; gap: 3px; max-height: 220px; overflow-y: auto; }
+.proj-pick { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 9px; padding: 7px 10px; font-size: 13px; color: var(--ink-2); transition: background var(--t), border-color var(--t); }
+.proj-pick:hover { background: var(--panel-2); }
+.proj-pick.on { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.proj-pick-box { width: 17px; height: 17px; flex: none; border: 2px solid var(--line); border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #fff; }
+.proj-pick.on .proj-pick-box { background: var(--accent); border-color: var(--accent); }
+.proj-pick-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Inline section rename. */
 .sbx-rename { flex: 1; min-width: 0; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--ink); background: var(--input-bg); border: 1px solid var(--accent); border-radius: 7px; padding: 3px 7px; outline: none; box-shadow: 0 0 0 3px var(--accent-weak); }
 .sbx-rename-btn { opacity: 0; }
