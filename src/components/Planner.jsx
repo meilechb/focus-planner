@@ -1011,6 +1011,18 @@ function Sidebar(props) {
     payload: { kind: 'batch', color, title: l.title, tasks: (tasks || l.tasks).filter((t) => t.status !== 'completed').map((t) => ({ ...t, connId: g.id, listId: l.id })) },
   } }
   const favIcon = (k) => (k === 'project' ? 'folder' : k === 'zohoproject' || k === 'crm' || k === 'tasklist' ? 'list' : 'check')
+  // A favorite should show the SAME icon the user picked for its source section
+  // in the sidebar. The section id is encoded in the favorite's id:
+  //   p:<projectId>            -> the "Custom" projects section ('custom')
+  //   zb:<sectionId>:<listId>  -> a batch (Deals/Leads/project/list)
+  //   t:<sectionId>:<listId>:<taskId> -> a single task
+  const favSectionId = (f) => {
+    const parts = (f.id || '').split(':')
+    if (parts[0] === 'p') return 'custom'
+    if (parts[0] === 'zb' || parts[0] === 't') return parts[1]
+    return null
+  }
+  const favIconFor = (f) => navCfg.icons?.[favSectionId(f)] || favIcon(f.kind)
 
   // --- apply the saved "Customize nav bar" settings ------------------------
   const mods = navCfg.modules || {}
@@ -1114,7 +1126,7 @@ function Sidebar(props) {
             {favorites.filter((f) => !taskSearch || (f.label || '').toLowerCase().includes(taskSearch.toLowerCase())).map((f) => (
               <div key={f.id} className="fav-card" style={{ background: f.color }} draggable onDragStart={(e) => dragFav(e, f)}
                 onClick={() => { if (f.kind === 'project') { const p = projects.find((x) => x.id === f.projectId); if (p) onEditProject(p) } }}>
-                <span className="fav-ic"><Icon name={favIcon(f.kind)} size={14} /></span>
+                <span className="fav-ic"><Icon name={favIconFor(f)} size={14} /></span>
                 <span className="fav-name">{f.label}</span>
                 <button className="fav-x" title="Unfavorite" onClick={(e) => { e.stopPropagation(); toggleFav(f) }}><Icon name="star" size={13} filled /></button>
               </div>
