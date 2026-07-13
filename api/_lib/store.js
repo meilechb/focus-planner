@@ -102,6 +102,18 @@ function normalizeDoc(doc) {
   return doc
 }
 
+// A doc with no connections, no blocks and no projects is "blank" — the state
+// you'd get right after a botched migration (an empty default doc written to
+// Redis before the Blob copy ran). We treat that as recoverable: if Blob still
+// holds real data, we re-migrate over the blank Redis doc.
+function isBlankDoc(doc) {
+  if (!doc) return true
+  const hasConns = Array.isArray(doc.connections) && doc.connections.length > 0
+  const hasBlocks = doc.state?.blocks && Object.keys(doc.state.blocks).length > 0
+  const hasProjects = Array.isArray(doc.state?.projects) && doc.state.projects.length > 0
+  return !hasConns && !hasBlocks && !hasProjects
+}
+
 // Newest Blob version (immutable URL, always fresh). Returns null if there are
 // no versions yet; throws on an actual fetch/parse failure so a write never
 // runs against wrongly-empty data.
@@ -140,18 +152,19 @@ async function readDoc() {
     // @upstash/redis auto-serializes JSON: get() returns the parsed object (or
     // null when the key doesn't exist yet).
     const doc = normalizeDoc(await redis().get(DOC_KEY))
-    if (doc) return { doc }
-    // Redis is empty — one-time migration: pull the existing Blob document (if
-    // any) and seed Redis with it, so blocks, settings AND connected accounts
-    // carry over without anyone having to reconnect.
+    if (doc && !isBlankDoc(doc)) return { doc }
+    // Redis is empty OR blank (e.g. a default doc got written before migration
+    // ran). Recover from the legacy Blob store: if it still holds real data,
+    // copy it into Redis so blocks, settings AND connected accounts carry over
+    // without anyone having to reconnect.
     try {
       const legacy = await blobReadNewest()
-      if (legacy) {
+      if (legacy && !isBlankDoc(legacy)) {
         try { await redis().set(DOC_KEY, legacy) } catch {}
         return { doc: legacy }
       }
     } catch {}
-    return { doc: emptyDoc(), empty: true }
+    return { doc: doc || emptyDoc(), empty: !doc }
   }
   // Redis not configured yet — keep working off the legacy Blob store.
   const doc = await blobReadNewest()
@@ -163,6 +176,40 @@ async function readDoc() {
 export async function loadDoc() {
   const { doc } = await readDoc()
   return doc
+}
+
+// Safe storage snapshot for debugging — counts and flags only, never secrets
+// or actual content. Used by the temporary /api/diag endpoint.
+function summarizeDoc(doc) {
+  const blocks = doc.state?.blocks || {}
+  return {
+    present: true,
+    blockDays: Object.keys(blocks).length,
+    totalBlocks: Object.values(blocks).reduce((n, a) => n + (Array.isArray(a) ? a.length : 0), 0),
+    projects: Array.isArray(doc.state?.projects) ? doc.state.projects.length : 0,
+    favorites: Array.isArray(doc.state?.favorites) ? doc.state.favorites.length : 0,
+    connections: Array.isArray(doc.connections)
+      ? doc.connections.map((c) => ({ provider: c.provider, email: c.account_email || null, hasToken: !!c.refresh_token }))
+      : [],
+  }
+}
+
+export async function diagnostics() {
+  const out = {
+    redisConfigured: redisConfigured(),
+    blobTokenPresent: !!process.env.BLOB_READ_WRITE_TOKEN,
+  }
+  if (redisConfigured()) {
+    try {
+      const raw = normalizeDoc(await redis().get(DOC_KEY))
+      out.redis = raw ? { ...summarizeDoc(raw), blank: isBlankDoc(raw) } : { present: false }
+    } catch (e) { out.redisError = String(e.message || e) }
+  }
+  try {
+    const b = await blobReadNewest()
+    out.blob = b ? { ...summarizeDoc(b), blank: isBlankDoc(b) } : { present: false }
+  } catch (e) { out.blobError = String(e.message || e) }
+  return out
 }
 
 // Read, apply `mutator`, write the whole doc back. Single-user app, so
