@@ -35,7 +35,7 @@ const SEEN_KEY = 'focus_seen_accounts'
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
 function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
 const NAVCFG_KEY = 'focus_navcfg'
-const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, zohoAssignee: 'mine', filters: { deals: [], leads: [], projects: [] }, colors: {}, names: {}, icons: {}, buffers: { before: 15, after: 0 } }
+const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, filters: { deals: [], leads: [], projects: [] }, projectShow: [], colors: {}, names: {}, icons: {}, buffers: { before: 15, after: 0 } }
 const ICON_CHOICES = ['folder', 'check', 'list', 'calendar', 'bell', 'focus', 'star', 'users', 'clock', 'video', 'mapPin', 'link', 'align', 'sliders']
 // One source of truth for connector colors. A block dropped from a source, the
 // sidebar section, and the focus card ALL use this — so a Google task is the
@@ -1014,14 +1014,17 @@ function Sidebar(props) {
     let ts = l.tasks
     if (g.id === 'zoho-crm' && l.id === 'deals') ts = ts.filter((t) => passesFilters(t, filters.deals))
     if (g.id === 'zoho-crm' && l.id === 'leads') ts = ts.filter((t) => passesFilters(t, filters.leads))
-    if (g.id === 'zoho-projects') {
-      if (navCfg.zohoAssignee !== 'all') ts = ts.filter((t) => t.mine !== false)
-      ts = ts.filter((t) => passesFilters(t, filters.projects))
-    }
+    if (g.id === 'zoho-projects') ts = ts.filter((t) => passesFilters(t, filters.projects))
     return ts
   }
+  // Which projects to show (empty = all). Lets the user hide projects entirely.
+  const projectShow = navCfg.projectShow || []
   const visibleGroups = groups
-    .map((g) => ({ ...g, lists: g.lists.filter((l) => moduleOn(g, l)) }))
+    .map((g) => {
+      let lists = g.lists.filter((l) => moduleOn(g, l))
+      if (g.id === 'zoho-projects' && projectShow.length) lists = lists.filter((l) => projectShow.includes(l.id))
+      return { ...g, lists }
+    })
     .filter((g) => g.lists.length)
   const taskCount = visibleGroups.reduce((a, g) => a + g.lists.reduce((b, l) => b + listTasks(g, l).length, 0), 0)
 
@@ -1081,7 +1084,7 @@ function Sidebar(props) {
             </div>
           )
         })}
-        {!col && tasks.length === 0 && <div className="muted tlist-empty">{g.id === 'zoho-projects' && navCfg.zohoAssignee !== 'all' ? 'None assigned to you' : 'Empty'}</div>}
+        {!col && tasks.length === 0 && <div className="muted tlist-empty">No matching tasks</div>}
       </div>
     )
   })
@@ -1382,12 +1385,9 @@ function SettingsModal(props) {
                                 <ModuleBlock name="CRM · Leads" on={mods.leads !== false} onToggle={() => setMod('leads', mods.leads === false)} opts={leadOpts} rules={filters.leads} onRules={(r) => setRules('leads', r)} emptyHint="No fields loaded yet — refresh, or reconnect Zoho so it can read your CRM fields." />
                                 <ColorRow label="Zoho CRM color" k="zoho-crm" cur={curColor} onPick={setColor} />
                                 {projError && <div className="set-warn">Zoho reported: {projError}</div>}
-                                <ModuleBlock name="Projects" on={mods.projects !== false} onToggle={() => setMod('projects', mods.projects === false)} opts={projOpts} rules={filters.projects} onRules={(r) => setRules('projects', r)}
-                                  emptyHint="No filterable fields on your project tasks yet." extra={
-                                    <div className="seg cz-seg" style={{ marginBottom: 12 }}>
-                                      <button className={'seg-btn' + (navCfg.zohoAssignee !== 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'mine' })}>Assigned to me</button>
-                                      <button className={'seg-btn' + (navCfg.zohoAssignee === 'all' ? ' on' : '')} onClick={() => onNavChange({ ...navCfg, zohoAssignee: 'all' })}>All tasks</button>
-                                    </div>
+                                <ModuleBlock name="Projects · tasks" on={mods.projects !== false} onToggle={() => setMod('projects', mods.projects === false)} opts={projOpts} rules={filters.projects} onRules={(r) => setRules('projects', r)}
+                                  emptyHint="No filterable fields on your project tasks yet — refresh after connecting." extra={
+                                    <ProjectPicker projects={projGroup?.lists || []} show={navCfg.projectShow || []} onChange={(ids) => onNavChange({ ...navCfg, projectShow: ids })} />
                                   } />
                                 <ColorRow label="Zoho Projects color" k="zoho-projects" cur={curColor} onPick={setColor} />
                               </>
@@ -1634,6 +1634,36 @@ function FilterBuilder({ opts, rules, onChange, extra, emptyHint }) {
         ? <button className="cz-add" onClick={addRule}><Icon name="plus" size={14} /> Add filter</button>
         : <div className="muted" style={{ fontSize: 12 }}>{emptyHint || 'No fields available yet.'}</div>}
     </>
+  )
+}
+
+// Pick which projects appear in the sidebar. Empty selection = show all.
+function ProjectPicker({ projects, show, onChange }) {
+  const all = !show.length
+  const toggle = (id) => {
+    const base = show.length ? show : projects.map((p) => p.id) // "all" → start fully selected
+    const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
+    onChange(next.length === projects.length ? [] : next) // everything selected → store [] (all)
+  }
+  return (
+    <div className="proj-picker">
+      <div className="proj-picker-head">
+        <span>Show projects{all ? '' : ` (${show.length}/${projects.length})`}</span>
+        {!all && <button className="link" onClick={() => onChange([])}>Show all</button>}
+      </div>
+      <div className="proj-picker-list">
+        {projects.length === 0 && <div className="muted" style={{ fontSize: 12 }}>No projects loaded yet — refresh after connecting Zoho.</div>}
+        {projects.map((p) => {
+          const on = all || show.includes(p.id)
+          return (
+            <button key={p.id} className={'proj-pick' + (on ? ' on' : '')} onClick={() => toggle(p.id)}>
+              <span className="proj-pick-box">{on && <Icon name="check" size={12} strokeWidth={2.6} />}</span>
+              <span className="proj-pick-name">{p.title}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
