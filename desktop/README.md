@@ -7,11 +7,24 @@ keeps working against the same backend — nothing to re-configure.
 
 What you get over a browser tab:
 
+- **A floating, always-on-top focus card.** A small window that shows what to
+  work on right now and floats above every other app — including fullscreen
+  apps and other windows — so it's never covered. Drag it anywhere by its
+  header; it remembers where you put it. Hide it with its ✕, and bring it back
+  from **Window → Show Focus Card** (⌘/Ctrl+Shift+F).
 - Its own app icon in the Dock / Taskbar / Start menu.
 - A dedicated window with no browser chrome, native menus, and standard
   shortcuts (⌘R reload, ⌘+/− zoom, fullscreen, etc.).
 - Single-instance behaviour — clicking the icon focuses the existing window.
 - External links open in your real browser; sign-in flows stay in-window.
+- A friendly retry screen if the connection drops, instead of a blank window.
+
+### How the floating focus card stays in sync
+
+The focus card is a second, frameless, always-on-top window that loads the same
+app at `#focus`. It shares the main window's local cache, so it always reflects
+your current schedule: change a block in the planner and the floating card
+updates within moments. Checking a task off on the card syncs it back too.
 
 ## Run it locally (development)
 
