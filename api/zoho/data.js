@@ -22,9 +22,11 @@ export default async function handler(req, res) {
     const errors = []
 
     for (const c of zohoConns) {
-      const full = await getConnection(c.id)
       let accessToken, apiDomain
       try {
+        // getConnection decrypts the refresh token; if that throws (e.g. a
+        // rotated SESSION_SECRET) degrade this account instead of 500ing all.
+        const full = await getConnection(c.id)
         const r = await refreshAccessToken({
           refreshToken: full.refresh_token,
           clientId: clientId(),

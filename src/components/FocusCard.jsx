@@ -6,11 +6,17 @@ const LS_KEY = 'focus_card_box'
 const DEFAULT_BOX = { x: null, y: null, w: 300, h: 260 }
 
 function loadBox() {
+  let box
   try {
-    return { ...DEFAULT_BOX, ...JSON.parse(localStorage.getItem(LS_KEY) || '{}') }
+    box = { ...DEFAULT_BOX, ...JSON.parse(localStorage.getItem(LS_KEY) || '{}') }
   } catch {
-    return { ...DEFAULT_BOX }
+    box = { ...DEFAULT_BOX }
   }
+  // Seed an on-screen bottom-right position up front so the card doesn't flash
+  // at the top-left corner before the mount clamp runs.
+  if (box.x == null && typeof window !== 'undefined') box.x = Math.max(12, window.innerWidth - box.w - 24)
+  if (box.y == null && typeof window !== 'undefined') box.y = Math.max(12, window.innerHeight - box.h - 24)
+  return box
 }
 
 export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNext, onHide, windowMode = false }) {

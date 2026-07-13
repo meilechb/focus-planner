@@ -202,14 +202,23 @@ export async function listTaskLists(accessToken) {
   return (data.items || []).map((l) => ({ id: l.id, title: l.title }))
 }
 
-// Open tasks in a list (completed hidden by default).
+// Open tasks in a list (completed hidden by default). Follows nextPageToken so
+// lists with more than 100 open tasks aren't silently truncated.
 export async function listTasks({ accessToken, listId }) {
-  const p = new URLSearchParams({ showCompleted: 'false', showHidden: 'false', maxResults: '100' })
-  const data = await gfetch(
-    `${TASKS_BASE}/lists/${encodeURIComponent(listId)}/tasks?${p.toString()}`,
-    accessToken,
-  )
-  return (data.items || []).map((t) => ({
+  const items = []
+  let pageToken = null
+  for (let guard = 0; guard < 50; guard++) {
+    const p = new URLSearchParams({ showCompleted: 'false', showHidden: 'false', maxResults: '100' })
+    if (pageToken) p.set('pageToken', pageToken)
+    const data = await gfetch(
+      `${TASKS_BASE}/lists/${encodeURIComponent(listId)}/tasks?${p.toString()}`,
+      accessToken,
+    )
+    items.push(...(data.items || []))
+    pageToken = data.nextPageToken
+    if (!pageToken) break
+  }
+  return items.map((t) => ({
     id: t.id,
     title: t.title || '(untitled)',
     status: t.status,

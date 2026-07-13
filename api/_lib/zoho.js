@@ -85,12 +85,21 @@ export async function getProfile(accessToken) {
 // --- CRM (Deals / Leads) ----------------------------------------------------
 
 async function crmGet(apiDomain, accessToken, module, fields) {
-  const url = `${apiDomain}/crm/v8/${module}?fields=${encodeURIComponent(fields)}&per_page=200`
-  const res = await fetch(url, { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } })
-  if (res.status === 204) return []
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(`zoho crm ${module}: ${data.message || JSON.stringify(data)}`)
-  return data.data || []
+  // Page through all records — Zoho caps per_page at 200, so a module with more
+  // than 200 records needs the info.more_records loop or the rest are dropped.
+  const out = []
+  let page = 1
+  for (let guard = 0; guard < 50; guard++) {
+    const url = `${apiDomain}/crm/v8/${module}?fields=${encodeURIComponent(fields)}&per_page=200&page=${page}`
+    const res = await fetch(url, { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } })
+    if (res.status === 204) break
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(`zoho crm ${module}: ${data.message || JSON.stringify(data)}`)
+    out.push(...(data.data || []))
+    if (!data.info?.more_records) break
+    page += 1
+  }
+  return out
 }
 
 // A deal/lead is "closed" if its stage/status reads as won, lost, closed,
@@ -193,7 +202,10 @@ async function projGetV3(path, accessToken) {
 }
 
 // V3 returns large ids as `id_string` to survive JSON number precision; prefer it.
-const zid = (o) => String(o.id_string || o.id)
+// Zoho IDs can exceed JS-safe integers, so prefer id_string. Returns null when
+// neither is present (never the literal string 'undefined', which would become
+// a bogus id/Map key downstream).
+const zid = (o) => (o && (o.id_string != null || o.id != null) ? String(o.id_string ?? o.id) : null)
 
 export async function listPortals(accessToken) {
   // Use V3 so portal ids match the V3 tasks endpoint; fall back to classic.
@@ -224,7 +236,9 @@ const closedName = (t) => {
 
 // Normalize one V3 task to our shape, carrying its project ref for grouping.
 function mapProjectTask(t) {
-  const ownerList = t.details?.owners || t.owners || t.assignees || (t.owner ? [t.owner] : []) || (t.assignee ? [t.assignee] : [])
+  // Note: `t.owner ? [t.owner] : []` yields a truthy empty array, so it must be
+  // the LAST fallback — otherwise `|| (t.assignee ? ...)` after it is dead code.
+  const ownerList = t.details?.owners || t.owners || t.assignees || (t.owner ? [t.owner] : t.assignee ? [t.assignee] : [])
   const owners = (Array.isArray(ownerList) ? ownerList : []).map((o) => o?.name || o?.full_name || o?.first_name || o?.zpuid || o).filter((x) => x && typeof x === 'string')
   const status = closedName(t) || null
   const priority = (typeof t.priority === 'object' ? t.priority?.name : t.priority) || t.priority_name || null
