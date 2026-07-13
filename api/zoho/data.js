@@ -19,6 +19,7 @@ export default async function handler(req, res) {
     const zohoConns = (await listConnections()).filter((c) => c.provider === 'zoho')
     const crm = { deals: [], leads: [], dealFields: [], leadFields: [] }
     const projects = []
+    const statusOptions = new Set() // all project task statuses (incl. closed)
     const errors = []
 
     for (const c of zohoConns) {
@@ -58,7 +59,9 @@ export default async function handler(req, res) {
           const myIds = await listMyTaskIds(portal.id, accessToken) // Set | null
           let tasks = []
           try {
-            tasks = await listPortalTasks(portal.id, accessToken)
+            const r = await listPortalTasks(portal.id, accessToken)
+            tasks = r.tasks
+            for (const s of r.statuses || []) statusOptions.add(s)
           } catch (e) {
             errors.push(`tasks: ${e.message || e}`)
             continue
@@ -76,7 +79,7 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ crm, projects, errors })
+    return res.status(200).json({ crm, projects, projectFieldOptions: { Status: [...statusOptions] }, errors })
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) })
   }
