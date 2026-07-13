@@ -9,5 +9,7 @@ contextBridge.exposeInMainWorld('focusDesktop', {
   moveCard: (dx, dy) => ipcRenderer.send('card:move', { dx, dy }),
   resizeCard: (width, height) => ipcRenderer.send('card:resize', { width, height }),
   hideFocusCard: () => ipcRenderer.send('card:hide'),
+  minimizeCard: () => ipcRenderer.send('card:minimize'),
+  restoreCard: () => ipcRenderer.send('card:restore'),
   focusMain: () => ipcRenderer.send('app:focusMain'),
 })
