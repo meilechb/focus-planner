@@ -76,8 +76,36 @@ export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNex
     setBox((b) => { persist(b); return b }) // save once, at the end of the gesture
   }
 
-  // In window mode the OS window is the frame: fill it and let the native
-  // title-bar drag region move it, so we skip the in-page position/resize box.
+  // --- Window mode (desktop card): move/resize the OS window via IPC. Native
+  // drag/resize is unreliable on transparent frameless Windows windows, so we
+  // drive it from pointer deltas in screen coordinates.
+  const winDrag = useRef(null)
+  const winResize = useRef(null)
+  const bridge = () => (typeof window !== 'undefined' ? window.focusDesktop : null)
+  function onWinDown(e) {
+    if (e.target.closest('button, a, [data-resize]')) return // let controls work
+    winDrag.current = { x: e.screenX, y: e.screenY }
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch {}
+  }
+  function onWinMove(e) {
+    const d = winDrag.current; if (!d) return
+    const dx = e.screenX - d.x, dy = e.screenY - d.y
+    if (dx || dy) { bridge()?.moveCard(dx, dy); winDrag.current = { x: e.screenX, y: e.screenY } }
+  }
+  function onWinUp(e) { winDrag.current = null; try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {} }
+  function onWinResizeDown(e) {
+    e.stopPropagation()
+    winResize.current = { x: e.screenX, y: e.screenY, w: window.innerWidth, h: window.innerHeight }
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch {}
+  }
+  function onWinResizeMove(e) {
+    const r = winResize.current; if (!r) return
+    bridge()?.resizeCard(r.w + (e.screenX - r.x), r.h + (e.screenY - r.y))
+  }
+  function onWinResizeUp(e) { winResize.current = null; try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {} }
+
+  // In window mode the OS window is the frame: fill it; drag/resize move the
+  // window itself. Otherwise position/size the in-page floating box.
   const style = windowMode
     ? { background: focus.color }
     : {
@@ -88,8 +116,12 @@ export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNex
         background: focus.color,
       }
 
+  const rootDrag = windowMode
+    ? { onPointerDown: onWinDown, onPointerMove: onWinMove, onPointerUp: onWinUp }
+    : {}
+
   return (
-    <div className={'focus-card' + (windowMode ? ' focus-card--window' : '')} style={style}>
+    <div className={'focus-card' + (windowMode ? ' focus-card--window' : '')} style={style} {...rootDrag}>
       <div className="focus-head" onPointerDown={windowMode ? undefined : (e) => onPointerDown(e, 'move')}>
         <span className="focus-sub">{focus.sub}</span>
         <button className="focus-x" onClick={onHide} title={windowMode ? 'Hide the focus card' : 'Hide'} onPointerDown={(e) => e.stopPropagation()}>
@@ -148,7 +180,9 @@ export default function FocusCard({ focus, now, onToggleTask, onOpenEvent, onNex
         </button>
       </div>
 
-      {!windowMode && <div className="focus-resize" onPointerDown={(e) => onPointerDown(e, 'resize')} />}
+      {windowMode
+        ? <div className="focus-resize win" data-resize onPointerDown={onWinResizeDown} onPointerMove={onWinResizeMove} onPointerUp={onWinResizeUp} title="Drag to resize" />
+        : <div className="focus-resize" onPointerDown={(e) => onPointerDown(e, 'resize')} />}
     </div>
   )
 }

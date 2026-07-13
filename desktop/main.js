@@ -1,271 +1,163 @@
-// Focus Planner — Electron main process.
+// Focus Planner — Windows desktop shell (Electron).
 //
 // Two windows:
-//   1. The main planner window (loads the hosted web app).
-//   2. A small, frameless, always-on-top "focus card" window that floats above
-//      every other app — including fullscreen apps and other apps' windows — so
-//      what-to-work-on-now is never covered. It loads the same app at "#focus".
+//   1. Main planner window — loads the hosted web app.
+//   2. A small always-on-top "focus card" that floats above everything. It's a
+//      frameless transparent window; dragging and resizing are done manually
+//      via IPC (native resize is unreliable on transparent Windows windows),
+//      driven by pointer events in the web #focus view.
 //
-// Loading the live deployment keeps the desktop app perfectly in sync with the
-// web version and lets OAuth (Google, Zoho) work against the same backend.
+// Closing the main window quits the whole app (card included) so no invisible
+// process is ever left behind — which is what stopped it reopening before.
 
-const { app, BrowserWindow, shell, Menu, nativeImage, ipcMain, screen } = require('electron')
+const { app, BrowserWindow, shell, ipcMain, screen, nativeImage } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 
-// The web app to load. Override for local dev against a Vite server:
-//   FOCUS_URL=http://localhost:5173 npm start
 const APP_URL = process.env.FOCUS_URL || 'https://focus-planner-eight.vercel.app'
 const APP_ORIGIN = (() => { try { return new URL(APP_URL).origin } catch { return null } })()
 const FOCUS_URL = APP_URL + (APP_URL.includes('#') ? '' : '#focus')
 
-// A modern Chrome UA. Google blocks OAuth inside "embedded webviews"; presenting
-// as a normal Chrome browser lets the in-window sign-in flow succeed.
+// Present as Chrome so Google's OAuth doesn't reject us as an "embedded webview".
 const CHROME_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 
-// Hosts that are part of a sign-in flow and must stay in-window so the session
-// cookie lands on our own origin when the round-trip completes.
-const AUTH_HOSTS = [
-  'accounts.google.com',
-  'oauth2.googleapis.com',
-  'content.googleapis.com',
-  'accounts.zoho.com',
-  'accounts.zoho.eu',
-  'accounts.zoho.in',
-  'accounts.zoho.com.au',
-]
+const AUTH_HOSTS = ['accounts.google.com', 'oauth2.googleapis.com', 'content.googleapis.com',
+  'accounts.zoho.com', 'accounts.zoho.eu', 'accounts.zoho.in', 'accounts.zoho.com.au']
+const isAppUrl = (u) => { try { return APP_ORIGIN && new URL(u).origin === APP_ORIGIN } catch { return false } }
+const isAuthUrl = (u) => { try { return AUTH_HOSTS.includes(new URL(u).hostname) } catch { return false } }
 
-function isAppUrl(u) {
-  try { return APP_ORIGIN && new URL(u).origin === APP_ORIGIN } catch { return false }
-}
-function isAuthUrl(u) {
-  try { return AUTH_HOSTS.includes(new URL(u).hostname) } catch { return false }
-}
-
-// --- persisted focus-window bounds -----------------------------------------
-const boundsFile = () => path.join(app.getPath('userData'), 'focus-bounds.json')
-function loadFocusBounds() {
-  try { return JSON.parse(fs.readFileSync(boundsFile(), 'utf8')) } catch { return null }
-}
-function saveFocusBounds(b) {
-  try { fs.writeFileSync(boundsFile(), JSON.stringify(b)) } catch {}
-}
+const CARD = { minW: 220, minH: 120, maxW: 520, maxH: 360, defW: 300, defH: 210 }
+const boundsFile = () => path.join(app.getPath('userData'), 'focus-card-bounds.json')
+const loadBounds = () => { try { return JSON.parse(fs.readFileSync(boundsFile(), 'utf8')) } catch { return null } }
+const saveBounds = (b) => { try { fs.writeFileSync(boundsFile(), JSON.stringify(b)) } catch {} }
 
 let mainWindow = null
-let focusWindow = null
-let isQuitting = false
+let cardWindow = null
 
-// A tiny offline page so a dropped connection shows a friendly retry instead of
-// a blank window.
 function offlineHtml(target) {
-  return 'data:text/html;charset=utf-8,' + encodeURIComponent(`
-    <html><head><meta charset="utf-8"><style>
-      html,body{height:100%;margin:0;font:15px -apple-system,Segoe UI,Roboto,sans-serif;
-        background:#0b1020;color:#e5e9f2;display:flex;align-items:center;justify-content:center}
-      .box{text-align:center;padding:32px;max-width:340px}
-      h1{font-size:18px;margin:0 0 8px}p{opacity:.75;margin:0 0 20px;line-height:1.5}
-      button{background:#2563eb;color:#fff;border:0;border-radius:10px;padding:11px 20px;
-        font-size:14px;font-weight:600;cursor:pointer}
-    </style></head><body><div class="box">
-      <h1>Can't reach Focus Planner</h1>
-      <p>Check your internet connection and try again.</p>
-      <button onclick="location.replace('${target}')">Retry</button>
-    </div></body></html>`)
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(`<html><head><meta charset="utf-8"><style>
+    html,body{height:100%;margin:0;font:15px Segoe UI,system-ui,sans-serif;background:#0f0e17;color:#e8e8f2;
+    display:flex;align-items:center;justify-content:center}.b{text-align:center;padding:32px;max-width:340px}
+    h1{font-size:18px;margin:0 0 8px}p{opacity:.75;margin:0 0 20px;line-height:1.5}
+    button{background:#6d5efc;color:#fff;border:0;border-radius:10px;padding:11px 20px;font-size:14px;font-weight:600;cursor:pointer}
+    </style></head><body><div class="b"><h1>Can't reach Focus Planner</h1>
+    <p>Check your internet connection and try again.</p>
+    <button onclick="location.replace('${target}')">Retry</button></div></body></html>`)
 }
 
-function attachLinkRouting(wc) {
-  // New-window / target=_blank: keep our app and OAuth in-window; everything
-  // else opens in the real browser.
+function routeLinks(wc) {
   wc.setWindowOpenHandler(({ url }) => {
     if (isAppUrl(url) || isAuthUrl(url)) return { action: 'allow' }
     shell.openExternal(url)
     return { action: 'deny' }
   })
-  wc.on('will-navigate', (event, url) => {
+  wc.on('will-navigate', (e, url) => {
     if (isAppUrl(url) || isAuthUrl(url)) return
-    event.preventDefault()
-    shell.openExternal(url)
+    e.preventDefault(); shell.openExternal(url)
   })
 }
 
 function createMainWindow() {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 960,
-    minHeight: 640,
-    backgroundColor: '#0b1020',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    width: 1280, height: 860, minWidth: 940, minHeight: 620,
+    backgroundColor: '#ffffff',
     icon: nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png')),
-    show: false,
     webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
       preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true, nodeIntegration: false,
     },
   })
-
   win.webContents.setUserAgent(CHROME_UA)
-  win.once('ready-to-show', () => win.show())
   win.loadURL(APP_URL)
-  attachLinkRouting(win.webContents)
+  routeLinks(win.webContents)
   win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
     if (isMainFrame && code !== -3) win.loadURL(offlineHtml(APP_URL))
   })
-
+  // Closing the planner quits everything — no leftover background process.
+  win.on('closed', () => {
+    mainWindow = null
+    if (cardWindow && !cardWindow.isDestroyed()) cardWindow.destroy()
+    app.quit()
+  })
   mainWindow = win
-  win.on('closed', () => { if (mainWindow === win) mainWindow = null })
 }
 
-function createFocusWindow() {
-  if (focusWindow && !focusWindow.isDestroyed()) { showFocusWindow(); return }
-
-  const saved = loadFocusBounds()
+function createCardWindow() {
   const work = screen.getPrimaryDisplay().workArea
-  const w = saved?.width || 320
-  const h = saved?.height || 300
+  const saved = loadBounds()
+  const w = saved?.width || CARD.defW
+  const h = saved?.height || CARD.defH
   const x = saved?.x ?? work.x + work.width - w - 24
-  const y = saved?.y ?? work.y + 24
+  const y = saved?.y ?? work.y + work.height - h - 24
 
   const win = new BrowserWindow({
-    width: w,
-    height: h,
-    x,
-    y,
-    minWidth: 240,
-    minHeight: 200,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    hasShadow: true,
-    resizable: true,
-    maximizable: false,
-    minimizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    show: false,
-    icon: nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png')),
+    width: w, height: h, x, y,
+    frame: false, transparent: true, resizable: false, thickFrame: false,
+    maximizable: false, minimizable: false, fullscreenable: false,
+    skipTaskbar: true, hasShadow: false,
     webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
       preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true, nodeIntegration: false,
     },
   })
-
-  // Float above EVERYTHING — including fullscreen apps and other apps' windows.
-  // 'screen-saver' is the highest ordinary level; combined with
-  // visibleOnFullScreen the card is never covered.
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-
-  win.once('ready-to-show', () => win.show())
+  win.webContents.setUserAgent(CHROME_UA)
   win.loadURL(FOCUS_URL)
-  attachLinkRouting(win.webContents)
+  routeLinks(win.webContents)
   win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
     if (isMainFrame && code !== -3) win.loadURL(offlineHtml(FOCUS_URL))
   })
-
-  const persist = () => { if (!win.isDestroyed()) saveFocusBounds(win.getBounds()) }
-  win.on('moved', persist)
-  win.on('resized', persist)
-
-  // The X in the card hides the window (keeps it a click away) unless we're
-  // actually quitting.
-  win.on('close', (e) => {
-    if (!isQuitting) { e.preventDefault(); win.hide() }
-  })
-  win.on('closed', () => { if (focusWindow === win) focusWindow = null })
-
-  focusWindow = win
+  win.on('closed', () => { cardWindow = null })
+  cardWindow = win
 }
 
-function showFocusWindow() {
-  if (!focusWindow || focusWindow.isDestroyed()) { createFocusWindow(); return }
-  focusWindow.setAlwaysOnTop(true, 'screen-saver')
-  focusWindow.showInactive()
-}
-function hideFocusWindow() {
-  if (focusWindow && !focusWindow.isDestroyed()) focusWindow.hide()
-}
-function toggleFocusWindow() {
-  if (focusWindow && !focusWindow.isDestroyed() && focusWindow.isVisible()) hideFocusWindow()
-  else showFocusWindow()
-}
+// ---- IPC: manual drag / resize / visibility for the card ------------------
+ipcMain.on('card:move', (_e, { dx, dy }) => {
+  if (!cardWindow || cardWindow.isDestroyed()) return
+  const [x, y] = cardWindow.getPosition()
+  cardWindow.setPosition(Math.round(x + dx), Math.round(y + dy))
+  const b = cardWindow.getBounds(); saveBounds(b)
+})
+ipcMain.on('card:resize', (_e, { width, height }) => {
+  if (!cardWindow || cardWindow.isDestroyed()) return
+  const w = Math.max(CARD.minW, Math.min(CARD.maxW, Math.round(width)))
+  const h = Math.max(CARD.minH, Math.min(CARD.maxH, Math.round(height)))
+  const [x, y] = cardWindow.getPosition()
+  cardWindow.setBounds({ x, y, width: w, height: h })
+  saveBounds({ x, y, width: w, height: h })
+})
+ipcMain.on('card:hide', () => { if (cardWindow && !cardWindow.isDestroyed()) cardWindow.hide() })
+ipcMain.on('app:focusMain', () => {
+  if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus() }
+})
 
-ipcMain.on('focus:hide', hideFocusWindow)
-
-// Native menu: standard shortcuts + a toggle for the floating focus card.
-function buildMenu() {
-  const isMac = process.platform === 'darwin'
-  const template = [
-    ...(isMac ? [{ role: 'appMenu' }] : []),
-    { role: 'fileMenu' },
-    { role: 'editMenu' },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-      ],
-    },
-    {
-      label: 'Window',
-      submenu: [
-        {
-          label: 'Show Focus Card',
-          accelerator: 'CommandOrControl+Shift+F',
-          click: toggleFocusWindow,
-        },
-        { type: 'separator' },
-        { role: 'minimize' },
-        { role: 'zoom' },
-        ...(isMac ? [{ role: 'front' }] : [{ role: 'close' }]),
-      ],
-    },
-  ]
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
-}
-
-// Single-instance: focus the existing window instead of opening a second app.
+// Single instance: relaunching focuses/reshows the running app instead of
+// spawning a second one (and recovers it if it was hidden).
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
-    }
+    if (!mainWindow || mainWindow.isDestroyed()) createMainWindow()
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show(); mainWindow.focus()
+    if (!cardWindow || cardWindow.isDestroyed()) createCardWindow()
+    else cardWindow.show()
   })
 
   app.whenReady().then(() => {
-    buildMenu()
     createMainWindow()
-    // The floating focus card is a transparent, always-on-top window — the most
-    // fragile combo across GPUs/OSes. Isolate it so a failure there can never
-    // stop the main planner window from opening.
-    try { createFocusWindow() } catch (e) { console.error('focus window failed:', e) }
+    try { createCardWindow() } catch (e) { console.error('card window failed:', e) }
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createMainWindow()
-        try { createFocusWindow() } catch (e) { console.error('focus window failed:', e) }
+        try { createCardWindow() } catch (e) { console.error('card window failed:', e) }
       }
     })
   })
 
-  app.on('before-quit', () => { isQuitting = true })
-
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit()
-  })
+  app.on('window-all-closed', () => app.quit())
 }
