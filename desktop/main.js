@@ -10,7 +10,7 @@
 // Closing the main window quits the whole app (card included) so no invisible
 // process is ever left behind — which is what stopped it reopening before.
 
-const { app, BrowserWindow, shell, ipcMain, screen, nativeImage } = require('electron')
+const { app, BrowserWindow, shell, ipcMain, screen, nativeImage, session } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 
@@ -75,6 +75,34 @@ function createMainWindow() {
   win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
     if (isMainFrame && code !== -3) win.loadURL(offlineHtml(APP_URL))
   })
+
+  // Self-healing blank-window guard: if the app loads but renders nothing (an
+  // empty #root), reload once ignoring cache; if it's STILL empty, surface the
+  // real error in a dialog so it's visible without opening DevTools.
+  let lastError = ''
+  let healedOnce = false
+  win.webContents.on('console-message', (e, level, message) => { if (level >= 2) lastError = message })
+  win.webContents.on('did-finish-load', async () => {
+    if (win.isDestroyed()) return
+    let count = 1
+    try { count = await win.webContents.executeJavaScript("(document.getElementById('root')||{}).childElementCount || 0", true) } catch {}
+    if (count > 0) return
+    if (!healedOnce) {
+      healedOnce = true
+      setTimeout(() => { if (!win.isDestroyed()) win.webContents.reloadIgnoringCache() }, 400)
+      return
+    }
+    const { dialog } = require('electron')
+    const r = await dialog.showMessageBox(win, {
+      type: 'warning', title: 'Focus Planner',
+      message: 'The app loaded but didn’t render.',
+      detail: (lastError ? 'Error: ' + lastError : 'No error was reported.') + '\n\nClick Reload to try again.',
+      buttons: ['Reload', 'Open in browser', 'Close'], defaultId: 0,
+    }).catch(() => ({ response: 2 }))
+    if (r.response === 0) win.webContents.reloadIgnoringCache()
+    else if (r.response === 1) shell.openExternal(APP_URL)
+  })
+
   // Closing the planner quits everything — no leftover background process.
   win.on('closed', () => {
     mainWindow = null
@@ -134,30 +162,31 @@ ipcMain.on('app:focusMain', () => {
   if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus() }
 })
 
-// Single instance: relaunching focuses/reshows the running app instead of
-// spawning a second one (and recovers it if it was hidden).
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) {
-  app.quit()
-} else {
-  app.on('second-instance', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) createMainWindow()
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show(); mainWindow.focus()
-    if (!cardWindow || cardWindow.isDestroyed()) createCardWindow()
-    else cardWindow.show()
-  })
+// NO single-instance lock on purpose: a lock lets a stuck/leftover process
+// block every future launch (the "won't open" bug). Launching always opens a
+// fresh window; closing the planner quits that process cleanly. Worst case is
+// a second window if you double-launch — far better than not opening at all.
+app.whenReady().then(async () => {
+  // Uninstalling on Windows does NOT clear Electron's cache/service workers
+  // (they live in AppData), so a corrupt cache persists across reinstalls and
+  // can leave the window blank forever. Clear the HTTP cache + service workers
+  // + cache storage on every launch (cookies/localStorage are left intact, so
+  // sign-ins and settings survive).
+  try {
+    await session.defaultSession.clearCache()
+    await session.defaultSession.clearStorageData({ storages: ['serviceworkers', 'cachestorage'] })
+  } catch (e) { console.error('cache clear failed:', e) }
 
-  app.whenReady().then(() => {
-    createMainWindow()
-    try { createCardWindow() } catch (e) { console.error('card window failed:', e) }
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createMainWindow()
-        try { createCardWindow() } catch (e) { console.error('card window failed:', e) }
-      }
-    })
+  createMainWindow()
+  // Stagger the card so the two windows don't load through the same session at
+  // the exact same instant (a possible cause of one coming up blank).
+  setTimeout(() => { try { createCardWindow() } catch (e) { console.error('card window failed:', e) } }, 1200)
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow()
+      setTimeout(() => { try { createCardWindow() } catch (e) { console.error('card window failed:', e) } }, 1200)
+    }
   })
+})
 
-  app.on('window-all-closed', () => app.quit())
-}
+app.on('window-all-closed', () => app.quit())

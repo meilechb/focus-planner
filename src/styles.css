@@ -125,7 +125,10 @@ button:disabled, .btn.disabled, a.disabled { cursor: not-allowed; }
    App shell
    ============================================================ */
 .app { display: grid; grid-template-columns: 300px 1fr; grid-template-rows: minmax(0, 1fr); height: 100vh; overflow: hidden; background: var(--bg); }
-.app.sidebar-collapsed { grid-template-columns: 0 1fr; }
+/* When the sidebar is collapsed it's display:none, so the calendar is the only
+   grid item — it must sit in a SINGLE full-width column. A "0 1fr" here would
+   drop it into the 0px first column and collapse the whole view to nothing. */
+.app.sidebar-collapsed { grid-template-columns: 1fr; }
 .scrim { display: none; }
 
 /* Responsive: below tablet width the sidebar becomes an overlay drawer. */
@@ -516,7 +519,10 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
    applied to the OS window over IPC — NOT via -webkit-app-region, which blocks
    clicks and makes the card fiddly. */
 .focus-window-body { background: transparent; overflow: hidden; }
-.focus-card--window { position: fixed; inset: 0; width: 100%; height: 100%; border-radius: 16px; cursor: grab; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+/* The card sits a few px inside the transparent window so its drop-shadow has
+   room to fade out instead of being hard-clipped at the window edge (which
+   read as "weird shadows"). */
+.focus-card--window { position: fixed; inset: 7px; width: auto; height: auto; border-radius: 16px; cursor: grab; box-shadow: 0 6px 20px rgba(0,0,0,.28); }
 .focus-card--window:active { cursor: grabbing; }
 .focus-card--window button, .focus-card--window a { cursor: pointer; }
 .focus-card--window .focus-resize.win { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; z-index: 5;
