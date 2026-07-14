@@ -206,6 +206,14 @@ export function clampResizeTop(occupied, end, desiredStart) {
 
 // --- the focus brain --------------------------------------------------------
 
+// Google expands recurring events (singleEvents=true) into instances whose id
+// is "<baseId>_<UTCstamp>" (e.g. abc123_20260714T130000Z). The base id lets us
+// override a whole series at once; a non-recurring event's id is its own base.
+export function eventBaseId(id) {
+  const m = /^(.*)_(\d{8}T\d{6}Z)$/.exec(id || '')
+  return m ? m[1] : (id || '')
+}
+
 function within(now, item) {
   return now >= item.start && now < item.end
 }

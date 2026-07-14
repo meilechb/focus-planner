@@ -423,6 +423,11 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .ev-meeting { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); color: var(--ink-2); box-shadow: var(--shadow-sm); cursor: pointer; }
 .ev-meeting:hover { box-shadow: var(--shadow-md); border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
 .ev-meeting .ev-title { color: var(--ink); }
+/* Overridden ("not attending") meeting: visible but clearly inactive — its time
+   is free, so it shows greyed and struck-through. */
+.ev-meeting.skipped { opacity: .5; border-left-color: var(--muted); filter: grayscale(.4); }
+.ev-meeting.skipped .ev-title { text-decoration: line-through; color: var(--muted); }
+.ev-meeting.skipped .ev-time { text-decoration: line-through; }
 .ev-cam { position: absolute; top: 4px; right: 6px; color: var(--accent); opacity: .85; z-index: 2; }
 .ev-buffer { background: repeating-linear-gradient(45deg, rgba(230,124,0,.10), rgba(230,124,0,.10) 6px, rgba(230,124,0,.16) 6px, rgba(230,124,0,.16) 12px); border: 1px dashed rgba(214,120,10,.5); color: #a15c00; font-size: 11px; }
 .ev-block { color: #fff; box-shadow: var(--shadow-sm); cursor: grab; user-select: none; }
@@ -571,6 +576,10 @@ button:focus-visible, a.btn:focus-visible, a.btn-connect:focus-visible { outline
 .rsvp-dot.declined { background: #ea4335; }
 .rsvp-dot.tentative { background: #f9ab00; }
 .event-modal .modal-actions .link { display: inline-flex; align-items: center; gap: 5px; }
+/* Override ("I'm not attending") controls in the event modal. */
+.ev-override { border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 9px; }
+.ev-override-note { font-size: 12.5px; color: var(--muted); line-height: 1.45; display: flex; align-items: center; gap: 6px; }
+.ev-override-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* Customize nav bar */
 .customize-btn { display: inline-flex; align-items: center; gap: 6px; width: 100%; justify-content: center; margin: 2px 0 8px; padding: 7px 10px; font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-sm); transition: background var(--t), color var(--t); }

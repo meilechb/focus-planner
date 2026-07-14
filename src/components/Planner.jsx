@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../lib/api.js'
 import {
   PALETTE, DAY_START, DAY_END, SNAP_MIN, ACCENT,
   isoDate, addDays, addMonths, weekDays, monthGridDays, monthOf, dayNum,
   label, labelShort, hourLabel, snap, clamp, uuid, buffersFrom, computeFocus, nowMinutes, localDateISO,
-  fitDrop, clampMove, clampResizeBottom, clampResizeTop,
+  fitDrop, clampMove, clampResizeBottom, clampResizeTop, eventBaseId,
 } from '../lib/lib.js'
 import FocusCard from './FocusCard.jsx'
 import { Icon } from './Icon.jsx'
@@ -35,7 +35,7 @@ const SEEN_KEY = 'focus_seen_accounts'
 function readSeen() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) } catch { return new Set() } }
 function writeSeen(set) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])) } catch {} }
 const NAVCFG_KEY = 'focus_navcfg'
-const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, filters: { deals: [], leads: [], projects: [] }, projectShow: [], colors: {}, names: {}, icons: {}, buffers: { before: 15, after: 0 } }
+const DEFAULT_NAVCFG = { modules: { google: true, deals: true, leads: true, projects: true }, filters: { deals: [], leads: [], projects: [] }, projectShow: [], colors: {}, names: {}, icons: {}, buffers: { before: 15, after: 0 }, skips: { events: {}, series: {} } }
 const ICON_CHOICES = ['folder', 'check', 'list', 'calendar', 'bell', 'focus', 'star', 'users', 'clock', 'video', 'mapPin', 'link', 'align', 'sliders']
 // One source of truth for connector colors. A block dropped from a source, the
 // sidebar section, and the focus card ALL use this — so a Google task is the
@@ -61,7 +61,14 @@ function mergeNavCfg(p) {
     names: { ...DEFAULT_NAVCFG.names, ...(p.names || {}) },
     icons: { ...DEFAULT_NAVCFG.icons, ...(p.icons || {}) },
     buffers: { ...DEFAULT_NAVCFG.buffers, ...(p.buffers || {}) },
+    skips: { events: { ...(p.skips?.events || {}) }, series: { ...(p.skips?.series || {}) } },
   }
+}
+// A calendar event is "overridden" (you're not attending) when its own id or
+// its recurring-series base id is marked skipped in the nav config.
+function isEventSkipped(navCfg, ev) {
+  const s = navCfg?.skips || {}
+  return !!(s.events?.[ev.id] || s.series?.[eventBaseId(ev.id)])
 }
 function readNavCfg() {
   try {
@@ -467,7 +474,7 @@ export default function Planner() {
   function undoBlocks() { const prev = undoStack.current.pop(); if (prev) { setBlocks(prev); saveKey('blocks', prev); pushToast('Change reverted', 'info') } else { pushToast('Nothing to undo', 'info') } }
   const dayBlocks = (d) => blocks[d] || []
   function duplicateBlock(day, block) {
-    const occ = [...meetingsFor(day), ...buffersFrom(meetingsFor(day), navCfg.buffers), ...(blocks[day] || [])]
+    const occ = [...activeMeetingsFor(day), ...buffersFrom(activeMeetingsFor(day), navCfg.buffers), ...(blocks[day] || [])]
     const dur = block.end - block.start
     const slot = fitDrop(occ, block.end, dur) || fitDrop(occ, DAY_START, dur)
     if (slot) addBlockTo(day, { ...block, id: uuid(), start: slot.start, end: slot.end })
@@ -492,6 +499,27 @@ export default function Planner() {
   function toggleTaskList(k) { const n = selectedTaskLists.includes(k) ? selectedTaskLists.filter((x) => x !== k) : [...selectedTaskLists, k]; setSelectedTaskLists(n); saveKey('selectedTaskLists', n) }
 
   const meetingsFor = (d) => (connected ? (eventsByDate[d] || []) : [])
+  // Meetings that actually drive the day: overridden ("not attending") ones are
+  // dropped so they don't take the focus card, add buffers, or block the grid.
+  const skipped = useCallback((ev) => isEventSkipped(navCfg, ev), [navCfg.skips])
+  const activeMeetingsFor = (d) => meetingsFor(d).filter((m) => !skipped(m))
+  // Override / restore a calendar meeting. Scope 'all' hides every occurrence of
+  // a recurring series; 'one' (default) hides just this occurrence.
+  function skipEvent(ev, scope = 'one') {
+    const skips = { events: { ...(navCfg.skips?.events || {}) }, series: { ...(navCfg.skips?.series || {}) } }
+    if (scope === 'all') skips.series[eventBaseId(ev.id)] = true
+    else skips.events[ev.id] = true
+    updateNavCfg({ ...navCfg, skips })
+    pushToast(scope === 'all' ? 'Meeting overridden for all occurrences' : 'Meeting overridden — time freed', 'info')
+  }
+  function restoreEvent(ev) {
+    const events = { ...(navCfg.skips?.events || {}) }
+    const series = { ...(navCfg.skips?.series || {}) }
+    delete events[ev.id]
+    delete series[eventBaseId(ev.id)]
+    updateNavCfg({ ...navCfg, skips: { events, series } })
+    pushToast('Meeting restored', 'info')
+  }
 
   // --- task groups ----------------------------------------------------------
   const displayGroups = useMemo(() => {
@@ -543,9 +571,9 @@ export default function Planner() {
   const focus = useMemo(() => {
     const todays = blocks[today] || []
     if (overrideBlockId) { const b = todays.find((x) => x.id === overrideBlockId); if (b) return computeFocus({ blocks: [b], meetings: [], buffers: [], now: b.start, projects }) }
-    const m = connected ? (eventsByDate[today] || []) : []
+    const m = (connected ? (eventsByDate[today] || []) : []).filter((ev) => !isEventSkipped(navCfg, ev))
     return computeFocus({ blocks: todays, meetings: m, buffers: buffersFrom(m, navCfg.buffers), now, projects })
-  }, [blocks, today, overrideBlockId, connected, eventsByDate, now, projects, navCfg.buffers])
+  }, [blocks, today, overrideBlockId, connected, eventsByDate, now, projects, navCfg.buffers, navCfg.skips])
 
   function advanceToNext() {
     const todays = [...(blocks[today] || [])].sort((a, b) => a.start - b.start)
@@ -628,13 +656,13 @@ export default function Planner() {
             onDelete={(id) => deleteBlock(viewDate, id)}
             onCreateAt={(start, end) => { const b = { id: uuid(), start, end, title: 'Focus', color: ACCENT, tasks: [] }; addBlockTo(viewDate, b); setEditBlock({ block: b, day: viewDate }) }}
             onDropPayload={(payload, start, end) => { const b = blockFromPayload(payload, start, end); if (b) addBlockTo(viewDate, b) }}
-            onOpenEvent={setViewEvent}
+            onOpenEvent={setViewEvent} skipped={skipped}
           />
         )}
         {view === 'week' && (
           <WeekGrid
             viewDate={viewDate} today={today} now={now} zoom={zoom} projects={projects} bufferCfg={navCfg.buffers}
-            blocksByDay={blocks} meetingsFor={meetingsFor} blockColor={blockColor} blockName={blockName}
+            blocksByDay={blocks} meetingsFor={meetingsFor} blockColor={blockColor} blockName={blockName} skipped={skipped}
             onOpenDay={(d) => { setViewDate(d); setView('day') }}
             onEdit={(b, d) => setEditBlock({ block: b, day: d })}
             onCreateAt={(d, start, end) => { const b = { id: uuid(), start, end, title: 'Focus', color: ACCENT, tasks: [] }; addBlockTo(d, b); setEditBlock({ block: b, day: d }) }}
@@ -728,7 +756,10 @@ export default function Planner() {
         { id: 'settings', label: 'Open Settings', icon: 'settings', run: () => setShowConn(true) },
         { id: 'help', label: 'Keyboard shortcuts', icon: 'sliders', hint: '?', run: () => setShowHelp(true) },
       ]} />}
-      {viewEvent && <EventModal event={viewEvent} onClose={() => setViewEvent(null)} />}
+      {viewEvent && <EventModal event={viewEvent} isSkipped={skipped(viewEvent)}
+        onSkip={(scope) => { skipEvent(viewEvent, scope); setViewEvent(null) }}
+        onRestore={() => { restoreEvent(viewEvent); setViewEvent(null) }}
+        onClose={() => setViewEvent(null)} />}
     </div>
   )
 }
@@ -770,7 +801,7 @@ function TopBar({ view, setView, viewDate, setViewDate, today, zoom, setZoom, on
 }
 
 /* ---- Day grid (full drag / resize / click-create) ---- */
-function DayGrid({ day, today, now, zoom, bufferCfg, blocks, meetings, blockColor, blockName, onCommit, onEdit, onDelete, onCreateAt, onDropPayload, onOpenEvent }) {
+function DayGrid({ day, today, now, zoom, bufferCfg, blocks, meetings, blockColor, blockName, onCommit, onEdit, onDelete, onCreateAt, onDropPayload, onOpenEvent, skipped = () => false }) {
   const ref = useRef(null)
   const scrollRef = useRef(null)
   const drag = useRef(null)
@@ -785,12 +816,14 @@ function DayGrid({ day, today, now, zoom, bufferCfg, blocks, meetings, blockColo
     if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, (VIEW_START - DAY_START) * zoom)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  const buffers = useMemo(() => buffersFrom(meetings, bufferCfg), [meetings, bufferCfg])
+  // Overridden meetings are visible but don't count for buffers or collision.
+  const activeMeetings = useMemo(() => meetings.filter((m) => !skipped(m)), [meetings, skipped])
+  const buffers = useMemo(() => buffersFrom(activeMeetings, bufferCfg), [activeMeetings, bufferCfg])
   const height = (DAY_END - DAY_START) * zoom
   const hours = []; for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
   const yToMin = (clientY) => clamp(snap(DAY_START + (clientY - ref.current.getBoundingClientRect().top) / zoom), DAY_START, DAY_END - SNAP_MIN)
 
-  const occFor = (excludeId) => [...meetings, ...buffers, ...latest.current.filter((b) => b.id !== excludeId)]
+  const occFor = (excludeId) => [...activeMeetings, ...buffers, ...latest.current.filter((b) => b.id !== excludeId)]
 
   function onPointerDown(e, block, mode) {
     e.stopPropagation(); e.preventDefault()
@@ -826,7 +859,7 @@ function DayGrid({ day, today, now, zoom, bufferCfg, blocks, meetings, blockColo
     else if (dd) { const b = blocks.find((x) => x.id === dd.id); if (b) onEdit(b) }
   }
 
-  const occAll = () => [...meetings, ...buffers, ...latest.current]
+  const occAll = () => [...activeMeetings, ...buffers, ...latest.current]
 
   return (
     <div className="cal-scroll" ref={scrollRef}>
@@ -850,10 +883,11 @@ function DayGrid({ day, today, now, zoom, bufferCfg, blocks, meetings, blockColo
         )}
         {hint && <div className={'drop-hint' + (hint.none ? ' invalid' : '')} style={{ top: (hint.start - DAY_START) * zoom, height: (hint.end - hint.start) * zoom }}>{hint.none ? 'No room' : `${label(hint.start)} – ${label(hint.end)}`}</div>}
         {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 8, right: 10 }}>{b.kind === 'after' ? 'Wrap-up' : 'Prep'} · {b.forTitle}</div>)}
-        {meetings.map((m) => { const mh = (m.end - m.start) * zoom; return (
-          <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: mh, left: 8, right: 10 }} title={m.title}
+        {meetings.map((m) => { const mh = (m.end - m.start) * zoom; const isSk = skipped(m); return (
+          <div key={m.id} className={'ev ev-meeting' + (isSk ? ' skipped' : '')} style={{ top: (m.start - DAY_START) * zoom, height: mh, left: 8, right: 10 }} title={isSk ? m.title + ' — overridden (not attending)' : m.title}
             onClick={() => onOpenEvent && onOpenEvent(m)}>
-            {m.link && <span className="ev-cam" title="Has a video link"><Icon name="video" size={12} /></span>}
+            {isSk && <span className="ev-cam" title="Overridden — click to restore"><Icon name="x" size={12} /></span>}
+            {m.link && !isSk && <span className="ev-cam" title="Has a video link"><Icon name="video" size={12} /></span>}
             {mh < 40
               ? <div className="ev-line"><span className="ev-title">{m.title}</span><span className="ev-time">{labelShort(m.start)}</span></div>
               : <><div className="ev-title">{m.title}</div><div className="ev-time">{label(m.start)} – {label(m.end)}</div></>}
@@ -886,7 +920,7 @@ function DayGrid({ day, today, now, zoom, bufferCfg, blocks, meetings, blockColo
 }
 
 /* ---- Week grid ---- */
-function WeekGrid({ viewDate, today, now, zoom, projects, bufferCfg, blocksByDay, meetingsFor, blockColor, blockName, onOpenDay, onEdit, onCreateAt, onDropPayload, onOpenEvent }) {
+function WeekGrid({ viewDate, today, now, zoom, projects, bufferCfg, blocksByDay, meetingsFor, blockColor, blockName, onOpenDay, onEdit, onCreateAt, onDropPayload, onOpenEvent, skipped = () => false }) {
   const days = weekDays(viewDate)
   const height = (DAY_END - DAY_START) * zoom
   const hours = []; for (let h = DAY_START; h <= DAY_END; h += 60) hours.push(h)
@@ -914,15 +948,15 @@ function WeekGrid({ viewDate, today, now, zoom, projects, bufferCfg, blocksByDay
         </div>
         <div className="week-cols">
           {days.map((d) => {
-            const meetings = meetingsFor(d); const buffers = buffersFrom(meetings, bufferCfg); const bl = blocksByDay[d] || []
+            const meetings = meetingsFor(d); const activeM = meetings.filter((m) => !skipped(m)); const buffers = buffersFrom(activeM, bufferCfg); const bl = blocksByDay[d] || []
             return (
               <div key={d} className={'week-col' + (d === today ? ' is-today' : '')} ref={(el) => (colRefs.current[d] = el)}
-                onDoubleClick={(e) => { if (e.currentTarget === e.target) { const s = fitDrop([...meetings, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) onCreateAt(d, s.start, s.end) } }}
+                onDoubleClick={(e) => { if (e.currentTarget === e.target) { const s = fitDrop([...activeM, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) onCreateAt(d, s.start, s.end) } }}
                 onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => { e.preventDefault(); const s = fitDrop([...meetings, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) { try { onDropPayload(d, JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
+                onDrop={(e) => { e.preventDefault(); const s = fitDrop([...activeM, ...buffers, ...bl], yToMin(d, e.clientY), 60); if (s) { try { onDropPayload(d, JSON.parse(e.dataTransfer.getData('application/json')), s.start, s.end) } catch {} } }}>
                 {hours.map((h) => <div key={h} className="hour-row" style={{ top: (h - DAY_START) * zoom, left: 0 }} />)}
                 {buffers.map((b, i) => <div key={'b' + i} className="ev ev-buffer" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 2, right: 2 }} />)}
-                {meetings.map((m) => <div key={m.id} className="ev ev-meeting" style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 2, right: 2 }} title={`${m.title} · ${label(m.start)}`} onClick={(e) => { e.stopPropagation(); onOpenEvent && onOpenEvent(m) }}><div className="ev-title">{m.title}</div>{(m.end - m.start) * zoom > 28 && <div className="ev-time">{label(m.start)}</div>}</div>)}
+                {meetings.map((m) => <div key={m.id} className={'ev ev-meeting' + (skipped(m) ? ' skipped' : '')} style={{ top: (m.start - DAY_START) * zoom, height: (m.end - m.start) * zoom, left: 2, right: 2 }} title={skipped(m) ? `${m.title} — overridden` : `${m.title} · ${label(m.start)}`} onClick={(e) => { e.stopPropagation(); onOpenEvent && onOpenEvent(m) }}><div className="ev-title">{m.title}</div>{(m.end - m.start) * zoom > 28 && <div className="ev-time">{label(m.start)}</div>}</div>)}
                 {bl.map((b) => <div key={b.id} className="ev ev-block" style={{ top: (b.start - DAY_START) * zoom, height: (b.end - b.start) * zoom, left: 2, right: 2, background: blockColor(b) }} onClick={(e) => { e.stopPropagation(); onEdit(b, d) }} title={`${blockName(b)} · ${label(b.start)}`}><div className="ev-title">{blockName(b)}</div>{(b.end - b.start) * zoom > 28 && <div className="ev-time">{label(b.start)}</div>}</div>)}
                 {d === today && now >= DAY_START && now <= DAY_END && <div className="now-line" style={{ top: (now - DAY_START) * zoom, left: 0 }}><span className="now-dot" /></div>}
               </div>
@@ -1694,10 +1728,11 @@ function ProjectPicker({ projects, show, onChange }) {
   )
 }
 
-function EventModal({ event, onClose }) {
+function EventModal({ event, onClose, isSkipped = false, onSkip, onRestore }) {
   const e = event
   const rsvpText = { accepted: 'Going', declined: 'Declined', tentative: 'Maybe', needsAction: 'Awaiting' }
   const going = (e.attendees || []).filter((a) => a.status === 'accepted').length
+  const recurring = eventBaseId(e.id) !== e.id
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal event-modal" onClick={(ev) => ev.stopPropagation()}>
@@ -1740,6 +1775,25 @@ function EventModal({ event, onClose }) {
               </div>
             ))}
             {e.attendees.length > 8 && <div className="muted" style={{ padding: '2px 0' }}>+{e.attendees.length - 8} more</div>}
+          </div>
+        )}
+
+        {onSkip && (
+          <div className="ev-override">
+            {isSkipped ? (
+              <>
+                <div className="ev-override-note"><Icon name="check" size={14} /> You've overridden this meeting — its time is free.</div>
+                <button className="btn" onClick={onRestore}><Icon name="calendar" size={15} /> Restore meeting</button>
+              </>
+            ) : (
+              <>
+                <div className="ev-override-note">Not attending? Override it to free this time and let your focus card show your own work.</div>
+                <div className="ev-override-btns">
+                  <button className="btn" onClick={() => onSkip('one')}>Skip this one</button>
+                  {recurring && <button className="btn" onClick={() => onSkip('all')}>Skip all of these</button>}
+                </div>
+              </>
+            )}
           </div>
         )}
 

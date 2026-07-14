@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { computeFocus, buffersFrom, nowMinutes, localDateISO } from '../lib/lib.js'
+import { computeFocus, buffersFrom, nowMinutes, localDateISO, eventBaseId } from '../lib/lib.js'
 import FocusCard from './FocusCard.jsx'
 import { Icon } from './Icon.jsx'
 
@@ -52,7 +52,11 @@ export default function FocusWindow() {
   const now = nowMinutes(tz)
   const todays = (cache.blocks && cache.blocks[today]) || []
   const projects = cache.projects || []
-  const meetings = (cache.eventsByDate && cache.eventsByDate[today]) || []
+  // Honor meeting overrides ("not attending") set on the planner, so the card
+  // doesn't get hijacked by a meeting the user has freed.
+  const skips = nav.skips || {}
+  const isSkipped = (ev) => !!(skips.events?.[ev.id] || skips.series?.[eventBaseId(ev.id)])
+  const meetings = (((cache.eventsByDate && cache.eventsByDate[today]) || [])).filter((m) => !isSkipped(m))
 
   let focus
   if (overrideBlockId) {
