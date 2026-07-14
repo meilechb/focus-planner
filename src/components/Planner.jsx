@@ -1778,26 +1778,10 @@ function EventModal({ event, onClose, isSkipped = false, onSkip, onRestore }) {
           </div>
         )}
 
-        {onSkip && (
-          <div className="ev-override">
-            {isSkipped ? (
-              <>
-                <div className="ev-override-note"><Icon name="check" size={14} /> You've overridden this meeting — its time is free.</div>
-                <button className="btn" onClick={onRestore}><Icon name="calendar" size={15} /> Restore meeting</button>
-              </>
-            ) : (
-              <>
-                <div className="ev-override-note">Not attending? Override it to free this time and let your focus card show your own work.</div>
-                <div className="ev-override-btns">
-                  <button className="btn" onClick={() => onSkip('one')}>Skip this one</button>
-                  {recurring && <button className="btn" onClick={() => onSkip('all')}>Skip all of these</button>}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
         <div className="modal-actions">
+          {onSkip && (isSkipped
+            ? <button className="btn" onClick={onRestore}>Restore</button>
+            : <button className="btn" onClick={() => onSkip(recurring ? 'all' : 'one')}>Not attending</button>)}
           <div className="spacer" />
           {e.htmlLink && <a className="link" href={e.htmlLink} target="_blank" rel="noreferrer"><Icon name="externalLink" size={14} /> Open in Google Calendar</a>}
           <button className="btn" onClick={onClose}>Close</button>
